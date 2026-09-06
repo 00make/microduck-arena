@@ -41,7 +41,7 @@ pinned: false
 
 | Layer | Technology |
 |-------|-----------|
-| Framework | Vite + React 18 |
+| Framework | Vite + React 19 |
 | 3D Rendering | React Three Fiber + Three.js |
 | UI Components | MUI (Material UI) |
 | State Management | Zustand |
@@ -57,7 +57,7 @@ pinned: false
 
 ### Prerequisites
 
-- Node.js ≥ 18
+- Node.js ≥ 22.12
 - [Git LFS](https://git-lfs.com/) installed
 
 ### Clone & Run
@@ -177,6 +177,7 @@ The headless probe is deterministic and exits with meaningful codes:
 | WASD / Arrows | Move (forward, back, turn) |
 | M | Switch legs ↔ rollers |
 | Q / E | Kick left / right (legs only) |
+| F | Alternate Kick — alternating left/right kick (legs only) |
 | R | Sit / stand (legs) · Crouch-glide (rollers) |
 | G | Ground pick (legs only) |
 | C | Toggle chase camera |

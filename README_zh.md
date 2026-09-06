@@ -4,29 +4,28 @@
 
 > 浏览器里的 3v3 强化学习足球赛。MuJoCo 物理仿真 + ONNX 神经网络策略，50Hz 实时推理。
 
-<!-- badges -->
-[![Demo](https://img.shields.io/badge/🎮_Live_Demo-HuggingFace-yellow)](https://huggingface.co/spaces/00make/microduck-arena)
-[![Node](https://img.shields.io/badge/node-%3E%3D22.12-brightgreen)](https://nodejs.org)
-![License](https://img.shields.io/badge/license-TBD-blue)
+![License](https://img.shields.io/badge/license-MIT-blue)
+![MuJoCo](https://img.shields.io/badge/physics-MuJoCo_WASM-blue)
+![ONNX Runtime](https://img.shields.io/badge/inference-onnxruntime--web-green)
+[![HF Space](https://img.shields.io/badge/%F0%9F%A4%97_Space-Microduck_Arena-yellow)](https://huggingface.co/spaces/00make/microduck-arena)
 
-<!--
-  TODO: 替换为实际演示素材（截图或 GIF）
-  <p align="center">
-    <img src="docs/assets/demo.gif" alt="Microduck Arena 3v3 足球赛演示" width="720" />
-  </p>
--->
+<!-- TODO: 补充实际截图 / GIF -->
+
+**[▶ 在线试玩](https://huggingface.co/spaces/00make/microduck-arena)**
 
 ---
 
 ## ✨ 特性亮点
 
-- **🧠 真实 RL 策略推理** — 9 个 ONNX checkpoint 在浏览器端实时运行，不是预录动画，是真正的神经网络决策
-- **⚙️ MuJoCo WebAssembly 物理** — 工业级物理引擎编译为 WASM，50Hz 控制循环，完全客户端运行
-- **⚽ 3v3 足球模式** — 六只鸭子同场竞技，含裁判系统、AI 策略切换、进球庆祝、犯规罚时
-- **🕹️ 双运动形态** — legs（步行）和 rollers（轮滑）两种机器人变体，按 `M` 一键切换
-- **👻 多人幽灵同步** — Trystero WebRTC P2P，15Hz 状态广播，无需后端服务器
-- **📱 零部署依赖** — 纯静态站点，无后端、无数据库、无 API Key
-- **🎮 手柄支持** — 接入游戏手柄即可操控，映射与真实机器人运行时一致
+- 🦆 **浏览器原生物理仿真** — MuJoCo 编译为 WebAssembly，完整刚体动力学以 50Hz 运行
+- 🧠 **9 个神经网络策略** — onnxruntime-web（wasm-simd-threaded）驱动行走、踢球、翻滚等动作
+- ⚽ **3v3 足球模式** — 基于角色的 AI（守门员、后卫、前锋），配套完整裁判系统
+- 🌐 **WebRTC 多人幽灵** — 通过 Trystero 实现 P2P 鸭子同步，15Hz 广播，无需服务器
+- 🎨 **赛博朋克 Tron 竞技场** — 自定义 GLSL 着色器、霓虹网格地板、CRT 后处理
+- 📦 **零后端** — 纯静态站点，可部署到任意 CDN 或容器平台
+- 🎮 **全输入设备支持** — 键盘、触屏虚拟按键、带模拟扳机的手柄
+
+> 另有 **legs（步行）** 与 **rollers（轮滑）** 两种运动形态，按 `M` 即时切换。
 
 ---
 
@@ -34,50 +33,57 @@
 
 | 层级 | 技术 |
 |------|------|
-| 前端框架 | Vite + React 19 + React Three Fiber |
-| 3D 渲染 | Three.js + 自定义 GLSL ShaderMaterial |
+| 前端框架 | Vite + React 19 |
+| 3D 渲染 | React Three Fiber + Three.js |
 | UI 组件 | MUI (Material UI) |
 | 状态管理 | Zustand |
-| 物理引擎 | @mujoco/mujoco WebAssembly |
-| 策略推理 | onnxruntime-web (wasm-simd-threaded) |
-| 多人通信 | Trystero (WebRTC P2P, Nostr 信令) |
+| 物理引擎 | [@mujoco/mujoco](https://www.npmjs.com/package/@mujoco/mujoco)（WebAssembly） |
+| 模型推理 | [onnxruntime-web](https://www.npmjs.com/package/onnxruntime-web)（wasm-simd-threaded） |
+| 多人联机 | [Trystero](https://github.com/dmotz/trystero)（WebRTC P2P，Nostr 中继信令） |
+| 测试 | node:test + 无头端到端探针 |
 | 部署 | Docker (nginx) / Cloudflare Pages / Hugging Face Spaces |
 
 ---
 
 ## 🚀 快速开始
 
-### 前置要求
+### 环境要求
 
-- Node.js >= 22.12
-- [Git LFS](https://git-lfs.com/)（大文件：机器人网格、ONNX 模型、GLB）
+- Node.js ≥ 22.12
+- 已安装 [Git LFS](https://git-lfs.com/)
 
-### 安装与运行
+### 克隆并运行
 
 ```bash
-# 克隆仓库（确保已安装 Git LFS）
 git clone https://github.com/00make/microduck-arena.git
-cd microduck-arena
-
-# 如果克隆时未自动拉取 LFS 文件
-git lfs pull
-
-# 安装依赖并启动开发服务器
-cd app
+cd microduck-arena/app
 npm install
 npm run dev
 ```
 
-开发服务器默认运行在 `http://localhost:5173`。
+开发服务器启动在 `http://localhost:5173`。
 
-### 模式切换
+### URL 模式
 
 | 模式 | URL |
 |------|-----|
-| ⚽ 足球模式（3v3） | `http://localhost:5173/?mode=football&boot=1` |
+| 🏟️ 足球模式（3v3） | `http://localhost:5173/?mode=football&boot=1` |
 | 🦆 沙盒模式（单鸭） | `http://localhost:5173/?boot=1` |
 
-> `boot=1` 跳过欢迎弹窗，直接进入 BIOS 加载界面，显示真实加载进度。
+> **说明：** `?boot=1` 会跳过欢迎弹窗，直接展示实时 BIOS 加载控制台。加载失败（资产缺失、策略拉取出错等）会冻结在 `SYSTEM HALTED` 画面并显示错误详情，便于排查。
+
+### Git LFS
+
+大体积二进制资产（STL 网格、GLB 模型、ONNX 策略）通过 Git LFS 存储：
+
+```bash
+git lfs install   # 每台机器执行一次
+git lfs pull      # 在已有克隆中拉取真实二进制文件
+```
+
+若未拉取 LFS 文件，应用会对着文本指针文件启动并报类似
+`SyntaxError: Unexpected token 'v', "version ht"... is not valid JSON` 的错误
+（那串字符是 LFS 指针的开头，不是你的模型）。
 
 ---
 
@@ -86,52 +92,54 @@ npm run dev
 ```
 app/src/
 ├── game/                  # 命令式游戏核心（框架无关）
-│   ├── game.js            # MuJoCo 物理循环 + MJCF 编译
-│   ├── duck.js            # 鸭子渲染 rig（kinematics.json 驱动）
-│   ├── ghosts.js          # 多人幽灵同步（Trystero, 15Hz）
-│   ├── football/          # 3v3 足球逻辑
-│   │   ├── referee.js     # 裁判系统（犯规/罚时/进球判定）
-│   │   ├── ai/            # 每只鸭子的 AI 策略调度
+│   ├── game.js            # 主循环：MuJoCo 物理 + ONNX 推理 @ 50Hz
+│   ├── duck.js            # 机器人 rig：kinematics JSON → Three.js 骨骼
+│   ├── arena.js           # Tron 风格竞技场（GLSL 着色器）
+│   ├── constants.js       # 共享物理 / 游戏常量
+│   ├── ghosts.js          # WebRTC 多人同步（Trystero，15Hz 广播）
+│   ├── variants.js        # legs / rollers 运动形态切换
+│   ├── football/          # 足球领域逻辑
+│   │   ├── referee.js     # 规则引擎（进球、犯规、罚时、开球）
+│   │   ├── ai/            # 角色 AI（守门员、后卫、前锋）
 │   │   ├── field.js       # 球场与物理围栏
-│   │   ├── goal.js        # 球门碰撞检测
-│   │   └── constants.js   # 足球模式常量
-│   ├── controls/          # 键盘/手柄/触控输入
-│   ├── fx/                # 视觉特效（Tron 网格地板等）
-│   └── audio.js           # 音效系统
+│   │   ├── goal.js        # 球门网格与碰撞几何
+│   │   └── match-config.js # 队伍编成与比赛参数
+│   ├── controls/          # 输入控制器（键盘、手柄、触屏）
+│   └── fx/                # 视觉特效（粒子、镜头震动、CRT）
 ├── football/              # 足球模式 React 组件
-├── ui/                    # 通用 UI（HUD、标题菜单、BIOS）
 ├── scene/                 # R3F 画布与后处理
-└── store.js               # Zustand 全局状态
+├── ui/                    # React UI（HUD、菜单、遮罩层）
+└── store.js               # Zustand 桥梁（游戏 ↔ UI）
 ```
 
-**核心设计**：React/MUI 负责 UI 层，react-three-fiber 管理渲染上下文，物理/策略/rig 循环完全在框架无关的 `game/` 模块中运行。Zustand store 作为桥梁——游戏状态向外输出，UI 意图向内传递。
+**设计理念：** React 只负责 UI 外壳；游戏核心是命令式、与引擎解耦的。Zustand store 作为两者的桥梁——游戏状态向外流出，UI 意图向内流入。
 
-**策略接口**：所有变体共享统一的 61D 观测空间（陀螺仪、投影重力、14 关节位置/速度、上一步动作、13D 命令）和 14D 位置目标输出。
+**策略契约：** legs 与 rollers 共享同一套接口——61 维观测（陀螺仪、投影重力、14 个关节位置/速度、上一步动作、13 维命令）与 14 维位置目标输出，与 [`microduck_rl/scripts/infer_policy.py`](https://github.com/pollen-robotics/microduck_rl/blob/main/scripts/infer_policy.py) 保持一致。
 
 ---
 
 ## 📦 部署
 
-项目构建产物为纯静态文件，支持多种部署方式：
+### Cloudflare Pages
 
-### Docker (nginx)
+```bash
+cd app
+npm run build
+# 将 app/dist/ 部署到 Cloudflare Pages
+```
+
+### Docker
 
 ```bash
 docker build -t microduck-arena .
 docker run -p 8080:8080 microduck-arena
 ```
 
-使用多阶段构建：Vite 打包 → nginx-unprivileged 托管，监听 8080 端口。
-
-### Cloudflare Pages
-
-连接 GitHub 仓库，设置：
-- 构建命令：`cd app && npm ci && npm run build`
-- 输出目录：`app/dist`
+多阶段构建：Vite 打包产物 → nginx-unprivileged 在 8080 端口托管。
 
 ### Hugging Face Spaces
 
-仓库已包含 HF Spaces 配置（Docker SDK），直接推送即可部署。
+README 的 front matter（`sdk: docker`、`app_port: 8080`）让仓库可直接作为 HF Space 部署。推送到 Space 的 `main` 分支即自动构建。
 
 ---
 
@@ -140,15 +148,28 @@ docker run -p 8080:8080 microduck-arena
 ```bash
 cd app
 
-# 单元测试（纯逻辑，~100ms，无需 WASM）
+# 快速单元测试（node:test，约 100ms，不加载 WASM）
 npm test
 
-# 端到端测试：完整 3v3 比赛模拟（~16s）
+# 端到端无头 3v3 比赛探针（约 16s）
 npm run test:headless
 ```
 
-- **`npm test`** — Node 内置 test runner，覆盖裁判逻辑、AI、HUD、MJCF/XML 断言、常量校验。无浏览器、无 GPU、无 WASM，秒级完成。
-- **`npm run test:headless`** — 在 Node 中运行完整 300 秒六鸭 3v3 比赛（MuJoCo WASM 物理 + onnxruntime-web 策略推理），复用浏览器构建的同一套 referee/ai/constants 模块。退出码：`0` 成功，`1` 球从未移动，`2` 集体罚时（4+ 鸭同时离场），`3` 物理爆炸或崩溃。
+| 测试套件 | 覆盖范围 | 耗时 |
+|---------|---------|------|
+| `npm test` | 裁判规则、AI 逻辑、HUD 状态、MJCF/XML 断言、常量校验 | ~100ms |
+| `npm run test:headless` | 完整 300 秒六鸭比赛——在 Node 中跑 MuJoCo WASM + ONNX 推理 | ~16s |
+
+单元测试运行在 Node 内置 test runner 上，不需要浏览器、GPU 或 WASM，因此始终保持秒级响应。
+
+无头探针（[`app/tools/headless-match.mjs`](app/tools/headless-match.mjs)）复用了与浏览器构建完全相同的 referee / ai / constants / match-config 模块，是"多鸭 MJCF 能编译且物理保持稳定"的端到端保证。运行结果确定，退出码含义明确：
+
+- `0` — 成功
+- `1` — 球从未移动
+- `2` — 集体罚时（4 只以上鸭子同时离场）
+- `3` — 物理爆炸或崩溃
+
+因需加载 WASM 运行时、耗时约 16 秒，它被拆为独立脚本而非并入 `npm test`——在 CI 中应作为单独步骤接入。
 
 ---
 
@@ -156,31 +177,34 @@ npm run test:headless
 
 | 按键 | 功能 |
 |------|------|
-| WASD / 方向键 | 前进/后退 + 转向 |
+| WASD / 方向键 | 移动（前进、后退、转向） |
 | M | 切换 legs ↔ rollers |
-| Q / E | 左/右踢球（仅 legs） |
-| F | 交替左右踢球（仅 legs） |
-| R | 坐下/站起（legs）/ 下蹲滑行（rollers） |
+| Q / E | 左 / 右踢球（仅 legs） |
+| F | 左右脚交替踢球（仅 legs） |
+| R | 坐下 / 站起（legs）· 下蹲滑行（rollers） |
 | G | 地面拾取（仅 legs） |
 | C | 切换追踪摄像机 |
 | Space | 重置 |
-| 鼠标拖拽 | 旋转视角 |
-| 滚轮 | 缩放 |
+| 拖拽 / 滚轮 | 旋转视角 / 缩放 |
+
+完整支持手柄——按键映射与真实机器人运行时一致（右摇杆控制视角，R3 恢复追踪摄像机，扳机控制张嘴与叫声）。
+
+在 roller 模式下，legs 专属动作（踢球、坐下）会被禁用且提示淡出；此时靠驾驶撞球来玩。
 
 ---
 
 ## 🙏 致谢
 
-- 原始 Microduck 机器人设计与 RL 训练由 [pollen-robotics](https://github.com/pollen-robotics/microduck) 完成
-- [MuJoCo](https://mujoco.org/) 物理引擎由 Google DeepMind 开发并开源
-- [Trystero](https://github.com/dmotz/trystero) 提供无服务器 WebRTC 信令
-- [onnxruntime-web](https://github.com/microsoft/onnxruntime) 实现浏览器端神经网络推理
-- 项目作者：**[00make](https://github.com/00make)**
+- 🦆 **Microduck 机器人** — 原始设计来自 [Pollen Robotics](https://github.com/pollen-robotics/microduck)
+- 🧪 **强化学习策略** — 使用 [microduck_rl](https://github.com/pollen-robotics/microduck_rl) 训练
+- ⚙️ **MuJoCo** — [Google DeepMind](https://deepmind.google/technologies/mujoco/) 开发的物理引擎
+- 🔮 **ONNX Runtime Web** — [Microsoft](https://onnxruntime.ai/) 提供的推理引擎
+- 📡 **Trystero** — [Dan Motzenbecker](https://github.com/dmotz/trystero) 编写的 WebRTC P2P 库
+
+**作者：** [00make](https://github.com/00make)
 
 ---
 
 ## 📄 开源协议
 
-<!-- TODO: 确定协议后补充 -->
-
-TBD
+MIT © 00make。详见 [LICENSE](LICENSE)。
