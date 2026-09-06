@@ -247,7 +247,7 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
   // The bundler build embeds its JS loader; only the .wasm binary is
   // fetched at runtime, from our own hashed asset.
   ort.env.wasm.wasmPaths = { wasm: ortWasmUrl };
-  ort.env.wasm.numThreads = navigator.hardwareConcurrency || 4; // COOP/COEP enabled via nginx.conf & Cloudflare _headers
+  ort.env.wasm.numThreads = 1; // single-threaded to avoid Worker document polyfill crash on static hosting
 
   // ── MJCF preparation ────────────────────────────────────────────────
   // robot_allcollisions.xml is what infer_policy.py's scene.xml includes:
