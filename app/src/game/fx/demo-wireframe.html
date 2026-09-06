@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FX demo - holographic wireframe scan-up</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #0b0d10; overflow: hidden; }
+    #app { position: fixed; inset: 0; }
+    #hud {
+      position: fixed; top: 14px; left: 14px; z-index: 10;
+      font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: #ff7a2f; user-select: none;
+    }
+    #replay {
+      margin-top: 8px; padding: 7px 18px; cursor: pointer;
+      font: 600 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: 0.12em; color: #ff7a2f;
+      background: rgba(255, 122, 47, 0.08);
+      border: 1px solid rgba(255, 122, 47, 0.55); border-radius: 4px;
+    }
+    #replay:hover { background: rgba(255, 122, 47, 0.2); }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.164.1/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="app"></div>
+  <div id="hud">
+    FX: HOLOGRAPHIC WIREFRAME SCAN-UP<br />
+    <button id="replay">REPLAY</button>
+  </div>
+  <script type="module">
+    import * as THREE from "three";
+    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+    import { loadKinematics, buildRig, groundFullBody } from "../duck.js";
+    import { VARIANTS, materialHookFor } from "../variants.js";
+    import * as fx from "./fx-wireframe.js";
+
+    const mount = document.getElementById("app");
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0b0d10);
+
+    const camera = new THREE.PerspectiveCamera(40, 1, 0.02, 30);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    mount.appendChild(renderer.domElement);
+
+    // Same light rig as the live app so materials read identically.
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+    const keyLight = new THREE.DirectionalLight(0xffffff, 1.6);
+    keyLight.position.set(2, 4, 2);
+    scene.add(keyLight);
+    const fill = new THREE.DirectionalLight(0xffffff, 0.4);
+    fill.position.set(-2, 2, 1.5);
+    scene.add(fill);
+    const rim = new THREE.DirectionalLight(0xffb366, 0.7);
+    rim.position.set(0, 3, -2);
+    scene.add(rim);
+
+    const grid = new THREE.GridHelper(2, 40, 0x232c3a, 0x151a22);
+    scene.add(grid);
+
+    const resize = () => {
+      const w = mount.clientWidth, h = mount.clientHeight;
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
+    };
+    window.addEventListener("resize", resize);
+    resize();
+
+    // Isolated duck rig, classic colourway.
+    const k = await loadKinematics("/robot/mjlab/kinematics.json");
+    const rig = await buildRig(k, { materialForMesh: materialHookFor(VARIANTS.classic) });
+    groundFullBody(rig);
+    scene.add(rig.placer);
+
+    // Frame the duck.
+    rig.placer.updateWorldMatrix(true, true);
+    const box = new THREE.Box3().setFromObject(rig.placer);
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3()).length();
+    camera.position.set(center.x + size * 1.5, center.y + size * 0.85, center.z + size * 1.9);
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.copy(center);
+    controls.enableDamping = true;
+    controls.update();
+
+    fx.init({ THREE, scene, rig, camera, renderer });
+    fx.start();
+    window.fx = fx; // fx.setProgress(p) for deterministic captures
+
+    document.getElementById("replay").addEventListener("click", () => fx.start());
+
+    const clock = new THREE.Clock();
+    renderer.setAnimationLoop(() => {
+      const dt = Math.min(clock.getDelta(), 0.05);
+      fx.update(dt, clock.elapsedTime);
+      controls.update();
+      renderer.render(scene, camera);
+    });
+  </script>
+</body>
+</html>

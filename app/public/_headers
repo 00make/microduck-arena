@@ -1,0 +1,17 @@
+/*
+  X-Content-Type-Options: nosniff
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
+  Content-Security-Policy: frame-ancestors 'self' https://huggingface.co
+
+/bundle/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/assets/*
+  Cache-Control: public, max-age=86400
+
+/policies/*
+  Cache-Control: public, max-age=86400
+
+/robot/*
+  Cache-Control: public, max-age=86400

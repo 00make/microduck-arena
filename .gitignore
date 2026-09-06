@@ -1,0 +1,7 @@
+.env
+
+# Domain & deployment
+microduck-arena.com
+CNAME
+.wrangler/
+.dev.vars

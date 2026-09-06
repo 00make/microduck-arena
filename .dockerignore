@@ -1,0 +1,6 @@
+app/node_modules
+app/dist
+.git
+.qoder
+docs
+*.md
