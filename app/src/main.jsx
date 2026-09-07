@@ -9,9 +9,9 @@ import { theme } from "./theme.js";
 const params = new URLSearchParams(location.search);
 const App = params.get("soundboard") === "1"
   ? lazy(() => import("./ui/Soundboard.jsx"))
-  : params.get("mode") === "football"
-    ? lazy(() => import("./football/FootballApp.jsx"))
-    : lazy(() => import("./App.jsx"));
+  : params.get("mode") === "sandbox"
+    ? lazy(() => import("./App.jsx"))
+    : lazy(() => import("./football/FootballApp.jsx"));
 
 // Build tag: bump to change the bundle's content hash, e.g. to bust a stale
 // edge-cached asset URL on the HF Space.
