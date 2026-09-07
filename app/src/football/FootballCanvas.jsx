@@ -29,6 +29,10 @@ function FootballGame() {
   useFrame((_, dt) => {
     gameApi.frame?.(Math.min(dt, 0.05));
   });
+  // After the main R3F pass: blit team FPV eye-cams into HUD canvases.
+  useFrame((_, dt) => {
+    gameApi.renderTeamFpv?.(Math.min(dt, 0.05));
+  }, -1);
 
   return (
     <>

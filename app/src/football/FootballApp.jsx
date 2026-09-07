@@ -12,6 +12,7 @@ import FootballHud from "./FootballHud.jsx";
 import FootballTitle from "./FootballTitle.jsx";
 import { Halftone, CrtOverlay } from "../ui/Overlays.jsx";
 import { useGame } from "../store.js";
+import { detectLocale } from "./i18n.js";
 
 export default function FootballApp() {
   // prebootDone marks the shell ready; menuOpen raises the title/boot gate
@@ -20,7 +21,7 @@ export default function FootballApp() {
   // ducks the ambient bed). `entered` latches on the first Kick Off -
   // FootballTitle sets it alongside menuOpen:false.
   useEffect(() => {
-    useGame.setState({ prebootDone: true, menuOpen: true });
+    useGame.setState({ prebootDone: true, menuOpen: true, locale: detectLocale() });
   }, []);
 
   // The match itself already runs from boot (game.js kicks off during

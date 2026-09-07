@@ -44,7 +44,17 @@ export const useGame = create(
     lastTouchTeam: null, // 'red' | 'blue'
     setPieceType: null, // 'kickoff'|'throw_in'|'goal_kick'|'corner_red'|'corner_blue'
     matchEvents: [], // recent events for UI consumption [{type, team, time, payload}]
-    ducksState: [], // [{id, team, role, pos2D, fallen, penalized}] — 4Hz throttled
+    ducksState: [], // [{id, team, role, x, y, yaw, fallen, penalized, sentOff}] — 4Hz
+    ballState: null, // { x, y } — 4Hz, for top pitch radar
+
+    // Coach panel: user picks a side and tactics; opponent keeps defaults.
+    userTeam: "red", // "red" | "blue"
+    userStrategy: { formation: "2f1gk", style: "balanced", press: "medium" },
+    locale: "en", // "en" | "zh" — set from detectLocale on football mount
+    // Live dual-team match report (4 Hz) — possession + shots + strategy tags
+    tacticsBoard: null,
+    // Frozen fulltime tactics card (same shape as tacticsBoard)
+    tacticsCard: null,
   })),
 );
 
