@@ -7,6 +7,7 @@ import { useGame } from "../store.js";
 import { uiClick } from "../game/audio.js";
 import { ORANGE, MONO } from "../theme.js";
 import { ANTON, COMIC_INK, CREAM, COMIC_ORANGE } from "../ui/comic.jsx";
+import { GitHubLink } from "../ui/GitHubLink.jsx";
 import { formatClock, stateLabel, eventLabel, recentEvents } from "./hud-logic.js";
 
 // ── Design tokens (shared with Hud.jsx language) ──────────────────────────
@@ -438,6 +439,11 @@ export default function FootballHud() {
     >
       <BackButton />
       <Scoreboard />
+      {/* Top-right corner is free (scoreboard centres, Back sits top-left):
+          the repo link keeps its title-screen SPOT metrics, flipped to
+          fixed and re-armed for clicks inside this pointer-events:none
+          shell. */}
+      <GitHubLink sx={{ position: "fixed", zIndex: 10, pointerEvents: "auto" }} />
       <MatchResultBanner />
       <EventTicker />
       <PenaltyIndicator />

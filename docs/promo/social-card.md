@@ -72,6 +72,7 @@
 | 鸭头标记（张嘴） | `app/public/assets/duck-head-mark-open.webp` | "QUACK!" 漫画瞬间 |
 | 文字标 | `app/public/assets/microduck-wordmark.svg` | 标题字样（矢量，可任意缩放） |
 | 漫画贴纸 | `app/public/assets/stickers/*.webp` | 装饰点缀 |
+| **真实游戏截图** | `docs/promo/screenshots/*.png`（共 6 张） | **卡片底图/主视觉**，详见第七节与 [README.md](./README.md) |
 
 **贴纸清单**（`stickers/`）：`bang-red`、`boom`、`burst-yellow`、`quack`、`quack-quack`、`shooting-star`、`star-yellow`、`wave`、`ziouuu`。
 
@@ -93,15 +94,28 @@
 
 ---
 
-## 七、预留截图位
+## 七、截图位（已有真实截图，直接可用）
 
-卡片主视觉建议用**真实游戏截图**而非纯插画，更有说服力：
+卡片主视觉建议用**真实游戏截图**而非纯插画，更有说服力。`screenshots/` 下已备好 6 张实拍，可直接作为 OG 卡底图或参考：
 
-- 【截图位 A · 主图】3v3 足球对战全景（红蓝两队 + 霓虹球场），铺满背景或作为主体。
-- 【截图位 B ·  inset 小窗】漫画风进球过场动画分镜，做画中画斜贴一角。
-- 【截图位 C · 备用】沙盒模式单鸭 + 街机玩具场景，用于沙盒主题卡片。
+| 截图位 | 推荐素材 | 说明 |
+|--------|----------|------|
+| 【位 A · 主图】 | `screenshots/football-match-1.png`（或 `football-match-2.png`） | 3v3 对战全景，红蓝两队 + 霓虹球场，铺满背景或作主体，**首选** |
+| 【位 B · inset 小窗】 | （待补）漫画风进球过场分镜 | 现有截图暂无过场动画，可先用 `screenshots/football-title.png`（KICK OFF）代替，画中画斜贴一角 |
+| 【位 C · 备用】 | `screenshots/sandbox-boot.png`（或 `sandbox-title.png`） | 沙盒单鸭 + 街机玩具场景，用于沙盒主题卡片 |
 
-**截图获取方式**：
+**已有截图完整清单**（用途详见 [README.md](./README.md) 的「截图清单」）：
+
+- `screenshots/football-title.png` — 足球模式标题页（MICRODUCK FOOTBALL 3V3 + KICK OFF）
+- `screenshots/football-match-1.png` — 对战进行中（RED 0-0 BLUE · 04:51）——**主力底图**
+- `screenshots/football-match-2.png` — 对战进行中（RED 0-0 BLUE · 04:42 · 另一机位）
+- `screenshots/sandbox-title.png` — 沙盒标题页（WADDLE IN + 3D 鸭子）
+- `screenshots/sandbox-boot.png` — 沙盒实机（鸭子 + 足球 + HUD：FEET/ROLLERS、FPS/CTRL 50Hz）
+- `screenshots/football-boot.png` — 与 football-title 相同（`?boot=1` 对足球模式无效，属预期），备用
+
+> 待补的动态/分镜素材：进球高光 GIF、漫画过场动画分镜（现有均为静态截图）。
+
+**补拍新截图的方式**（如需替换或补充）：
 1. 打开 https://microduck-arena.com/ ，进入足球模式，等一次进球/精彩对抗。
 2. 用系统截图（macOS `⌘⇧4` / `⌘⇧5`）或浏览器 DevTools 的 "Capture full size screenshot"。
 3. 尽量截 2x/Retina 分辨率，导出后缩放到目标尺寸更清晰。
@@ -149,7 +163,7 @@
 - [ ] 配色与游戏一致（墨黑底 + 暖橙霓虹 + 红蓝队）
 - [ ] 标题 `MICRODUCK ARENA` + 副标题清晰可读（缩到手机信息流大小仍看得清）
 - [ ] HUD 徽章含关键技术指标
-- [ ] 含真实游戏截图（足球对战）
+- [x] 含真实游戏截图（足球对战：`screenshots/football-match-1.png` 已就绪）
 - [ ] 用了现成素材（wordmark / duck-head / stickers）
 - [ ] 各平台尺寸已导出（OG / Twitter / 微博 / 公众号 / 正方形）
 - [ ] `og:image` / `twitter:image` 已写入 `index.html` 并可访问

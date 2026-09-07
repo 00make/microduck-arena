@@ -2,6 +2,7 @@
 
 > One tailored version per platform — not copy-paste duplicates. Grab a block and post it.
 > Link roundup and image guidance in [README.md](./README.md).
+> Screenshots live in `screenshots/` — referenced below as `[Insert: screenshots/xxx.png]` / `[Cover: ...]` / `[Attach: ...]`. See the screenshot table in [README.md](./README.md) for what each one shows.
 
 ---
 
@@ -25,6 +26,9 @@ It's called **Microduck Arena**.
 Load the page and you drop straight into football mode: red team vs blue team, six ducks, each with a role — goalkeepers, defenders, forwards — plus a full referee system handling kickoffs, offsides, goals, and corner kicks. Want to just mess around with a single duck and some physics toys? That's sandbox mode at https://microduck-arena.com/?mode=sandbox
 
 【Image: 3v3 football match screenshot — neon pitch, red vs blue】
+
+> 📸 [Insert: screenshots/football-title.png] — football-mode title screen (KICK OFF), shows "open = football"
+> 📸 [Insert: screenshots/football-match-1.png] — full match view (hero image)
 
 ---
 
@@ -62,6 +66,8 @@ Every duck movement is backed by a neural network. The project ships **9 ONNX po
 
 【Image: kick moment / policy-switch diagram】
 
+> 📸 [Insert: screenshots/football-match-2.png] — second camera angle of live play (goal/kick GIF still to capture)
+
 **3) WebRTC P2P multiplayer, zero backend**
 
 For multiplayer I run **no server at all**. It uses **Trystero**, which does WebRTC P2P with Nostr relays for signaling — duck state broadcasts peer-to-peer at 15Hz. The whole site is a pile of static files you can drop on any CDN or container host: no database, no API, no ops.
@@ -76,12 +82,20 @@ The payoff: the game loop never gets throttled by React's render cadence, so the
 
 【Image: Tron arena + comic cutscene panel】
 
+> 📸 [Insert: screenshots/football-match-1.png] — Tron neon pitch (comic-cutscene panels not screenshotted yet)
+
 ---
 
 #### Two ways to play
 
+> 📸 [Insert: screenshots/football-title.png] — place before this section, football-mode title screen
+
 - **⚽ Football (default):** 3v3, six AI ducks auto-play, full referee system, post-match stats. Just open https://microduck-arena.com/
 - **🦆 Sandbox:** one duck free-roaming with a pile of '90s physics toys — arcade cabinets, a skateboard, a walkman — plus minigames. Full keyboard, touch, and gamepad support. https://microduck-arena.com/?mode=sandbox
+
+> 📸 [Insert: screenshots/football-match-1.png] — football gameplay
+> 📸 [Insert: screenshots/sandbox-title.png] — sandbox title screen (WADDLE IN + 3D duck)
+> 📸 [Insert: screenshots/sandbox-boot.png] — sandbox live scene (duck + ball + HUD: FEET/ROLLERS, FPS/CTRL 50Hz)
 
 ---
 
@@ -114,6 +128,8 @@ Body: The robot is Pollen Robotics' open-source **microduck** (25cm biped). I to
 
 Curious how this compares to sim2real folks' expectations: the browser gait is literally the deployed control rate, so it's a faithful preview of the hardware.
 
+> 📸 Recommended image: [screenshots/sandbox-boot.png] — single duck + HUD showing CTRL 50Hz (gait/control-rate proof); alt [screenshots/football-match-1.png]
+
 - Demo: https://microduck-arena.com/
 - Code (MIT): https://github.com/00make/microduck-arena
 
@@ -124,6 +140,8 @@ Curious how this compares to sim2real folks' expectations: the browser gait is l
 Body: I ship nine PPO policies (walk, sit/stand, roll, kicks, ground-pick, fall-recovery, roller drive/crouch) as ONNX and run them with **onnxruntime-web** in the browser. Each takes a 61-dim observation (joint angles, angular velocities, gravity projection, commanded velocity) and outputs a 14-dim action (one per joint). Single-step inference measures under 2ms, so six agents run concurrently without blowing the frame budget. Physics is MuJoCo WASM at 200Hz with a decimation of 4 → 50Hz control. Everything is client-side, zero backend.
 
 Happy to share obs layout / action-scaling details if anyone's porting policies to the web.
+
+> 📸 Recommended image: [screenshots/football-match-1.png] — six agents running policies concurrently; alt [screenshots/football-match-2.png]
 
 - Demo: https://microduck-arena.com/
 - Code (MIT): https://github.com/00make/microduck-arena
@@ -136,6 +154,8 @@ Body: I run the full MuJoCo rigid-body engine as WebAssembly in a browser tab �
 
 If you're evaluating heavy numeric WASM workloads on the web, this is a decent real-world reference for what's feasible.
 
+> 📸 Recommended image: [screenshots/sandbox-boot.png] — HUD shows live FPS + CTRL 50Hz (WASM perf visible); alt [screenshots/football-match-1.png]
+
 - Demo: https://microduck-arena.com/
 - Code (MIT): https://github.com/00make/microduck-arena
 
@@ -146,6 +166,8 @@ If you're evaluating heavy numeric WASM workloads on the web, this is a decent r
 Body: Architecture question I solved the hard way — how to keep a fixed 50Hz game loop smooth while using React for UI. My answer: React is only the chrome (menus, HUD, overlays); the game core is imperative, framework-agnostic JS (physics, AI, render loop). A Zustand store bridges them — state flows out to UI, intents flow in. Rendering is React Three Fiber + Three.js with a Tron-neon arena, GLSL shaders, CRT post-processing, and comic-book goal cutscenes. Multiplayer is WebRTC P2P (Trystero), so there's no server at all — just static files.
 
 Happy to dig into the loop/bridge pattern if anyone's wrestling with the same thing.
+
+> 📸 Recommended image: [screenshots/football-title.png] or [screenshots/sandbox-title.png] — shows the React UI shell over the game core
 
 - Demo: https://microduck-arena.com/
 - Code (MIT): https://github.com/00make/microduck-arena
@@ -162,12 +184,16 @@ I built a 3v3 football game where all six players are reinforcement-learning rob
 Play it: https://microduck-arena.com/
 【Attach: match GIF】
 
+> 📸 [Attach: screenshots/football-match-1.png] — hero match shot (or a match GIF once captured)
+
 **2/**
 The ducks are real hardware: Pollen Robotics' open-source **microduck**, a 25cm bipedal robot. Their walking/kicking/rolling skills are PPO policies trained in microduck_rl on MuJoCo, exported to ONNX. I brought that brain + body to the web.
 
 **3/**
 Physics runs in the tab: **MuJoCo compiled to WebAssembly**. 200Hz physics steps, 50Hz control loop (decimation of 4). That 50Hz matches the real robot's onboard control rate — so the browser gait is the hardware gait.
 【Attach: gait/physics clip】
+
+> 📸 [Attach: screenshots/sandbox-boot.png] — duck + HUD showing CTRL 50Hz / FPS
 
 **4/**
 Nine **ONNX neural policies** power every move — walk, kick, roll, get-up, ground-pick, roller variants. Each takes a 61-dim observation → 14-dim action. Inference is ONNX Runtime Web at **<2ms per step**, so six ducks run at once with room to spare.
@@ -176,12 +202,16 @@ Nine **ONNX neural policies** power every move — walk, kick, roll, get-up, gro
 Multiplayer has **zero backend**. It's WebRTC P2P via Trystero (Nostr relays for signaling) — duck state syncs peer-to-peer at 15Hz. The whole site is static files you can drop on any CDN.
 【Attach: arena screenshot】
 
+> 📸 [Attach: screenshots/football-match-2.png] — neon arena, second angle
+
 **6/**
 Stack: React + Vite + Three.js (R3F) + MuJoCo WASM + ONNX Runtime + Trystero + Zustand. React is just the UI shell; the game core is imperative JS, bridged by a Zustand store. Tron-neon arena, GLSL shaders, CRT post-FX, comic-book goal cutscenes.
 
 **7/**
 Two modes: ⚽ Football (default) — autonomous 3v3 with a full referee system. 🦆 Sandbox — one duck + '90s physics toys, keyboard/touch/gamepad. Try it: https://microduck-arena.com/?mode=sandbox
 【Attach: sandbox GIF】
+
+> 📸 [Attach: screenshots/sandbox-title.png] + [Attach: screenshots/sandbox-boot.png] — sandbox title then live scene
 
 **8/**
 It's fully **MIT open source** — code, policies, assets. Fork it, break it, send PRs.

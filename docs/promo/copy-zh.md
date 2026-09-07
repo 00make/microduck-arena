@@ -26,6 +26,9 @@
 
 【配图：3v3 足球对战截图，红蓝两队 + 霓虹球场】
 
+> 📸 [插入截图: screenshots/football-title.png] — 足球模式标题页（KICK OFF），放段首展示"打开即足球"
+> 📸 [插入截图: screenshots/football-match-1.png] — 对战全景（主力首图）
+
 ---
 
 #### 一、这些鸭子是哪来的
@@ -62,6 +65,8 @@
 
 【配图：策略切换示意 / 鸭子踢球瞬间】
 
+> 📸 [插入截图: screenshots/football-match-2.png] — 另一机位的对战瞬间（进球/踢球高光 GIF 待补）
+
 **3）WebRTC P2P 多人同步，零后端**
 
 多人这块我没有架任何服务器。用的是 **Trystero** 这个库，走 WebRTC P2P，通过 Nostr 中继做信令，玩家之间的鸭子状态直接点对点广播（15Hz）。所以整个站点本质上就是一堆静态文件，扔到任何 CDN 或容器里就能上线，没有数据库、没有 API、没有运维。
@@ -76,12 +81,20 @@
 
 【配图：Tron 霓虹竞技场 + 漫画过场动画分镜】
 
+> 📸 [插入截图: screenshots/football-match-1.png] — Tron 霓虹球场全景（漫画过场分镜暂无截图，待补）
+
 ---
 
 #### 四、两种玩法
 
+> 📸 [插入截图: screenshots/football-title.png] — 放在本段前，足球模式标题页
+
 - **⚽ 足球模式（默认）**：3v3，六只 AI 鸭子自动对打，完整裁判系统，赛后有技术统计。打开 https://microduck-arena.com/ 直接看。
 - **🦆 沙盒模式**：一只鸭子自由漫游，配了街机、滑板、walkman 一堆 90 年代物理玩具，还有小游戏。支持键盘、触屏、手柄全输入。进法：https://microduck-arena.com/?mode=sandbox
+
+> 📸 [插入截图: screenshots/football-match-1.png] — 足球玩法实拍
+> 📸 [插入截图: screenshots/sandbox-title.png] — 沙盒模式标题页（WADDLE IN + 3D 鸭子）
+> 📸 [插入截图: screenshots/sandbox-boot.png] — 沙盒实机（鸭子 + 足球 + HUD：FEET/ROLLERS、FPS/CTRL 50Hz）
 
 ---
 
@@ -104,6 +117,8 @@
 ## 二、B站动态版（短文 + 配图引导）
 
 【配图/视频：足球对战高光 GIF，鸭子进球瞬间最佳】
+
+> 📸 [封面: screenshots/football-match-1.png] — 动态封面首选（无 GIF 时用）；备选 [封面: screenshots/football-title.png]
 
 我做了个离谱的东西：**六只 AI 机器鸭在浏览器里踢 3v3 足球** 🦆⚽
 
@@ -137,6 +152,8 @@ Microduck Arena —— 完全跑在浏览器里的 3v3 强化学习足球竞技�
 Demo：https://microduck-arena.com/ （默认足球，`?mode=sandbox` 进沙盒）
 GitHub：https://github.com/00make/microduck-arena
 
+> 📸 [插入截图: screenshots/football-match-1.png] — 帖首配一张对战图（技术向版面，一张足矣）
+
 好奇纯前端把物理 + NN 推理都吃下来，性能和内存边界能推到哪，欢迎拍砖交流。
 
 ---
@@ -144,6 +161,8 @@ GitHub：https://github.com/00make/microduck-arena
 ## 四、微信公众号版（图文并茂 · 分段清晰）
 
 【封面图：Tron 霓虹球场 + 六只鸭子对峙，标题压字"浏览器里的强化学习足球队"】
+
+> 📸 [封面: screenshots/football-match-1.png] — 公众号首图底图（可叠加标题压字）；尺寸裁切见 social-card.md
 
 ### 引子
 
@@ -154,6 +173,8 @@ GitHub：https://github.com/00make/microduck-arena
 🎮 点开就能看：https://microduck-arena.com/
 
 【配图：足球对战全景截图】
+
+> 📸 [插入截图: screenshots/football-match-2.png]
 
 ---
 
@@ -166,6 +187,8 @@ GitHub：https://github.com/00make/microduck-arena
 而我做的事，是把这套身体和大脑，原封不动地搬进了浏览器。
 
 【配图：单只鸭子特写 / 步态分解】
+
+> 📸 [插入截图: screenshots/sandbox-title.png] — 单只鸭子 3D 模型特写
 
 ---
 
@@ -186,6 +209,8 @@ GitHub：https://github.com/00make/microduck-arena
 
 【配图：技术栈示意图 / 架构分层图】
 
+> 📸 [插入截图: screenshots/sandbox-boot.png] — HUD 可见 FPS / CTRL 50Hz、FEET/ROLLERS 切换，作控制频率与模式切换的实拍佐证
+
 ---
 
 ### 好看在哪？赛博朋克 + 漫画风
@@ -196,6 +221,8 @@ GitHub：https://github.com/00make/microduck-arena
 
 【配图：Tron 竞技场 + 漫画过场分镜】
 
+> 📸 [插入截图: screenshots/football-match-1.png] — Tron 霓虹球场（漫画过场分镜暂无截图，待补）
+
 ---
 
 ### 两种玩法
@@ -203,8 +230,12 @@ GitHub：https://github.com/00make/microduck-arena
 **⚽ 足球模式（默认）**：3v3，六只 AI 鸭子自动对打，有门将、后卫、前锋，还有完整裁判系统管进球、越位、角球，赛后给你一份技术统计。
 👉 https://microduck-arena.com/
 
+> 📸 [插入截图: screenshots/football-title.png] 或 [插入截图: screenshots/football-match-1.png]
+
 **🦆 沙盒模式**：一只鸭子自由漫游，街机、滑板、walkman 一堆 90 年代物理玩具随便玩，键盘、触屏、手柄全支持。
 👉 https://microduck-arena.com/?mode=sandbox
+
+> 📸 [插入截图: screenshots/sandbox-title.png] 或 [插入截图: screenshots/sandbox-boot.png]
 
 ---
 

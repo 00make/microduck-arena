@@ -1,8 +1,9 @@
 // In-game HUD: Back (top-left), pre-order button (top-right, label flips
 // to "Pre-order pack" while rollers are selected - the rollers ship in the
-// accessory pack), quickbar (bottom-left: colour palette + loco switch),
-// telemetry stack (bottom-right) and the LOADING ROLLERS line while the
-// roller stack streams in.
+// accessory pack) with the GitHub link stacked under it (same SHOP / CODE
+// column as the title screen), quickbar (bottom-left: colour palette +
+// loco switch), telemetry stack (bottom-right) and the LOADING ROLLERS
+// line while the roller stack streams in.
 //
 // Chrome reads as small comic PANELS: each group sits in a thick cream
 // keyline frame on a dark glass plate (1px ink inset between glass and
@@ -22,6 +23,7 @@ import { VARIANT_LABELS, VARIANT_SWATCH_HEX } from "../game/variants.js";
 import { uiClick, isMuted, setMuted } from "../game/audio.js";
 import { ORANGE, MONO } from "../theme.js";
 import { ANTON, COMIC_INK, CREAM } from "./comic.jsx";
+import { GitHubLink } from "./GitHubLink.jsx";
 
 // Matrix-style letter scramble: on change every glyph flips through random
 // charset entries, then locks to its target left-to-right over ~0.45 s.
@@ -515,6 +517,10 @@ export default function Hud() {
     <>
       <BackButton />
       <PreorderButton />
+      {/* The HUD renders as a bare fragment (no positioned wrapper), so the
+          link's default absolute SPOT would anchor to the viewport - flip
+          it to fixed to stack under the shop plate, SHOP / CODE column. */}
+      <GitHubLink sx={{ position: "fixed", zIndex: 10 }} />
       {!touchMode && (
         <>
           <Quickbar />

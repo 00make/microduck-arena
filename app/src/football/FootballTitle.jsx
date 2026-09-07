@@ -24,6 +24,7 @@ import { playConfirmBloop } from "../game/audio.js";
 import { INK, ORANGE, MONO } from "../theme.js";
 import { ComicButton, ComicTitle, HalftoneRamp, ANTON, CREAM } from "../ui/comic.jsx";
 import { PreorderButton } from "../ui/Hud.jsx";
+import { GitHubLink } from "../ui/GitHubLink.jsx";
 
 const rowIn = keyframes`
   from { transform: translateY(12px); opacity: 0; }
@@ -260,7 +261,8 @@ export default function FootballTitle({ onKickOff }) {
       />
 
       {/* Corner chrome: drawn duck head (top-left) + the in-game HUD's
-          shop plate (top-right), gated with the rest of the reveal. */}
+          shop plate (top-right) with the repo link stacked under it, gated
+          with the rest of the reveal. */}
       {ready && (
       <Box
         aria-hidden
@@ -326,6 +328,7 @@ export default function FootballTitle({ onKickOff }) {
       </Box>
       )}
       {ready && <PreorderButton sx={{ ...row(0.1) }} />}
+      {ready && <GitHubLink sx={{ ...row(0.18) }} />}
 
       {/* Boot gate: one centered spinner on bare ink with the match's
           step line until fonts, brand art and the game core are in. A
