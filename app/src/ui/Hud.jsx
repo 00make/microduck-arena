@@ -405,9 +405,7 @@ function Quickbar() {
           })}
         </Box>
       </HudPlate>
-      {/* Sound is fully disabled for now (SOUND_DISABLED in audio.js) -
-          the mute toggle comes back with the finished sound design. */}
-      {/* <SoundToggle /> */}
+      <SoundToggle />
     </Box>
   );
 }

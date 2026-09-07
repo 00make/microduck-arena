@@ -5,13 +5,13 @@
 //
 // No THREE / MuJoCo / ONNX dependencies. Only imports data constants.
 
-import { FIELD_HALF_L, GOAL_WIDTH } from '../constants.js';
+import { FIELD_HALF_L, FIELD_HALF_W, GOAL_WIDTH } from '../constants.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TUNE — all adjustable parameters in one place
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const TUNE = {
+export const BASE_TUNE = {
   // Locomotion limits (mirrors game/constants.js VEL_FWD / VEL_BACK / VEL_ANG)
   VX_MAX: 0.25,
   VX_MIN: -0.2,
@@ -24,17 +24,19 @@ const TUNE = {
   SHOOT_SPEED: 0.25,     // raised above walk-policy dead-zone (~0.2 m/s)
   AIM_SPEED: 0.22,        // raised above walk-policy dead-zone (~0.2 m/s)
 
-  // Deadlock breaking: lateral-offset approach + kick cooldown.
-  // Two chasers arriving head-on at the mid-circle trap the ball and trade
-  // cancelled kicks; the repeated one-shot kick imbalance topples them. The
-  // chaser therefore aims at a point offset to the ball's side-rear instead of
-  // the ball centre, and after several wasted kicks it stops kicking and
-  // repositions laterally for a short cooldown.
-  APPROACH_OFFSET: 0.4,        // lateral offset of the CHASE aim point (m)
+  // Deadlock breaking: after wasted at-feet kicks, stop kicking and shuffle
+  // laterally for a short cooldown (breaks two-chaser mid-circle topple loops).
+  APPROACH_OFFSET: 0.4,        // kept for PRESS overlays / tactics metrics
   KICK_COOLDOWN_TICKS: 15,     // ticks a stuck chaser stops kicking & repositions (1.5s @10Hz)
   KICK_HOLD_BEFORE_COOLDOWN: 2,// consecutive at-feet kick attempts before arming the cooldown
 
-  // Chase / return
+  // Chase approach (ER-Force MoveToStaticBall): stand at ball − shotDir × r,
+  // not goto(ball). Slow ball → static offset; fast ball → short ball+v·t.
+  BALL_SLOW_EPS: 0.12,         // |v| below this → static approach
+  BALL_PREDICT_T: 0.7,         // max prediction horizon (s)
+  APPROACH_ARRIVE_EPS: 0.12,   // on approach spot → step into ball
+
+  // Chase / return — kickoff ~0.9 m to approach spot @ 0.25 m/s
   CHASE_SPEED: 0.25,
   RETURN_SPEED: 0.25,     // raised above walk-policy dead-zone (~0.2 m/s)
 
@@ -49,6 +51,14 @@ const TUNE = {
   FORMATION_X_ADVANCE: 0.3,
   FORMATION_X_RETREAT: -0.3,
   FORMATION_SLOT_EPS: 0.3,  // "at slot" distance
+
+  // SSL-inspired role assignment / support (ER-Force cost, TIGERs support lane).
+  // Still outputs {vx,wz,kick} — no path planner / messaging bus.
+  CHASE_HYSTERESIS: 0.28,     // sticky bonus so chaser does not flicker every tick
+  FACE_COST_WEIGHT: 0.35,     // metres-equivalent for facing away from the ball
+  SUPPORT_AHEAD: 0.55,        // support stands this far past the ball (attack axis)
+  SUPPORT_LATERAL: 0.7,       // lateral offset → open lane opposite the chaser
+  SECOND_PRESS_DIST: 0,       // >0: non-chaser within range soft-contests (high press)
 
   // Goalkeeper
   GK_LINE_OFFSET: 0.1,
@@ -71,6 +81,10 @@ const TUNE = {
   DEF_TURN_GAIN: 2.2,
   TEAMMATE_BALL_DIST: 0.5,
 };
+
+// Active TUNE for the current decideAll call. Strategy overlays swap this for
+// one team tick, then restore BASE_TUNE so tests / compat agents stay stable.
+let TUNE = BASE_TUNE;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Utility functions (pure math, no deps)
@@ -154,18 +168,77 @@ function getOpponents(duck, allDucks, team) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Chaser selection
+// Chaser selection (SSL / ER-Force style cost, not pure Euclidean)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function pickChaser(ducks, ball) {
-  let best = null, bestDist = Infinity;
+/**
+ * Ball-get cost: distance + facing penalty − sticky hysteresis.
+ * Lower is better. Exported for tactics-board + tests.
+ */
+export function chaseCost(duck, ball, prevChaserId = -1) {
+  const [x, y] = duckXY(duck);
+  const dist = distanceTo(x, y, ball.x, ball.y);
+  const toBall = angleTo(x, y, ball.x, ball.y);
+  const yaw = duck.yaw || 0;
+  // 0 when facing the ball, up to 2 when facing away → weighted into metres.
+  const face = 1 - Math.cos(angleDiff(yaw, toBall));
+  let cost = dist + TUNE.FACE_COST_WEIGHT * face;
+  if (duck.id === prevChaserId) cost -= TUNE.CHASE_HYSTERESIS;
+  return cost;
+}
+
+/** Assign primary ball-getter among field players. */
+export function assignChaserId(ducks, ball, prevChaserId = -1) {
+  let best = null;
+  let bestCost = Infinity;
   for (const d of ducks) {
-    if (d.role === 'goalkeeper' || d.fallen || d.penalized) continue;
-    const [x, y] = duckXY(d);
-    const dist = distanceTo(x, y, ball.x, ball.y);
-    if (dist < bestDist) { bestDist = dist; best = d; }
+    if (d.role === 'goalkeeper' || d.fallen || d.penalized || d.sentOff) continue;
+    const c = chaseCost(d, ball, prevChaserId);
+    if (c < bestCost) {
+      bestCost = c;
+      best = d;
+    }
   }
   return best ? best.id : -1;
+}
+
+function prevChaserIdOf(ducks) {
+  for (const d of ducks) {
+    if (d._ai?.holdingChase) return d.id;
+  }
+  return -1;
+}
+
+function markChaserHold(ducks, chaserId) {
+  for (const d of ducks) {
+    if (d.id === chaserId) {
+      if (!d._ai) {
+        d._ai = {
+          aimTicks: 0, stallTicks: 0, escapeTicks: 0,
+          prevX: 0, prevY: 0, kickCooldown: 0, kickHoldTicks: 0,
+        };
+      }
+      d._ai.holdingChase = true;
+    } else if (d._ai) {
+      d._ai.holdingChase = false;
+    }
+  }
+}
+
+/** Support lane opposite the chaser (TIGERs-style free position near the ball). */
+function supportSlot(duck, ctx) {
+  const { ball, attackDir, chaserId, ducks } = ctx;
+  const spawnY = duck.spawnY != null ? duck.spawnY : 0;
+  let latSign = spawnY >= 0 ? 1 : -1;
+  const chaser = ducks.find((d) => d.id === chaserId);
+  if (chaser) {
+    const [, cy] = duckXY(chaser);
+    latSign = (cy - ball.y) >= 0 ? -1 : 1;
+  }
+  return {
+    x: clamp(ball.x + attackDir * TUNE.SUPPORT_AHEAD, -FIELD_HALF_L + 0.3, FIELD_HALF_L - 0.3),
+    y: clamp(ball.y + latSign * TUNE.SUPPORT_LATERAL, -FIELD_HALF_W + 0.3, FIELD_HALF_W - 0.3),
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -179,7 +252,9 @@ function buildCtx(ducks, gs) {
   const defendGoalX = -attackDir * FIELD_HALF_L;
   const ball = gs.ball;
   const allDucks = gs.allDucks || gs.ducks || ducks;
-  const chaserId = pickChaser(ducks, ball);
+  const prevId = gs.prevChaserId != null ? gs.prevChaserId : prevChaserIdOf(ducks);
+  const chaserId = assignChaserId(ducks, ball, prevId);
+  markChaserHold(ducks, chaserId);
   return { team, attackDir, targetGoalX, defendGoalX, ball, allDucks, chaserId, ducks };
 }
 
@@ -242,6 +317,37 @@ function gkDecide(duck, ctx) {
   );
 }
 
+function ballSpeed(ball) {
+  return Math.hypot(ball.vx || 0, ball.vy || 0);
+}
+
+/**
+ * ER-Force MoveToStaticBall / short intercept.
+ * Approach = predictedBall − shootDir × kickRadius (stand behind ball on the
+ * shot axis). Slow/still ball → no prediction; fast ball → ball + v·t with
+ * t ≈ dist/CHASE_SPEED capped by BALL_PREDICT_T.
+ */
+export function chaseApproachPoint(ball, targetGoalX, selfX, selfY) {
+  const r = TUNE.SHOOT_DIST * 0.95;
+  let bx = ball.x;
+  let by = ball.y;
+  const vx = ball.vx || 0;
+  const vy = ball.vy || 0;
+  if (ballSpeed(ball) > TUNE.BALL_SLOW_EPS) {
+    const distNow = Math.hypot(bx - selfX, by - selfY);
+    const t = clamp(distNow / Math.max(TUNE.CHASE_SPEED, 0.05), 0, TUNE.BALL_PREDICT_T);
+    bx += vx * t;
+    by += vy * t;
+  }
+  const gdx = targetGoalX - bx;
+  const gdy = 0 - by;
+  const glen = Math.hypot(gdx, gdy) || 1;
+  return {
+    x: bx - (gdx / glen) * r,
+    y: by - (gdy / glen) * r,
+  };
+}
+
 /**
  * Chaser: CHASE / AIM / SHOOT (merged forward logic).
  * Includes AIM fuse — if aiming too long, force back to CHASE.
@@ -249,7 +355,7 @@ function gkDecide(duck, ctx) {
 function chaserDecide(duck, ctx) {
   const [sx, sy] = duckXY(duck);
   const yaw = duck.yaw || 0;
-  const { ball, attackDir, targetGoalX } = ctx;
+  const { ball, targetGoalX } = ctx;
   const bd = distToBall(duck, ball);
   const toBall = angleToBall(duck, ball);
   const toGoal = angleTo(sx, sy, targetGoalX, 0);
@@ -289,77 +395,92 @@ function chaserDecide(duck, ctx) {
       }
       return limitCommand(TUNE.SHOOT_SPEED, turnToward(yaw, toGoal), true);
     }
-    // AIM — with fuse
+    // AIM — turn toward goal; after a short wind-up, poke-kick even if not
+    // perfectly aligned so we don't stand on the ball forever walking.
     ai.kickHoldTicks = 0;
     ai.aimTicks++;
     if (ai.aimTicks > TUNE.AIM_MAX_TICKS) {
-      // Fuse blown: back off and re-approach
+      // Fuse blown: re-approach via shot-axis stand point
       ai.aimTicks = 0;
+      const ap = chaseApproachPoint(ball, targetGoalX, sx, sy);
+      const toAp = angleTo(sx, sy, ap.x, ap.y);
       return limitCommand(
-        moveToward(yaw, toBall, TUNE.CHASE_SPEED),
-        turnToward(yaw, toBall),
+        moveToward(yaw, toAp, TUNE.CHASE_SPEED),
+        turnToward(yaw, toAp),
       );
     }
+    const pokeKick = ai.aimTicks >= 20;
     return limitCommand(
       moveToward(yaw, toGoal, TUNE.AIM_SPEED),
       turnToward(yaw, toGoal),
+      pokeKick,
     );
   }
 
-  // CHASE: approach the ball from its side-rear rather than head-on. Aiming at
-  // an offset point keeps two opposing chasers from meeting exactly at the ball
-  // centre (the head-on collision that traps it) and lines the body up for an
-  // angled strike. Offset side follows the duck's own Y relative to the ball.
+  // CHASE: MoveToStaticBall / intercept — go to (ball − shotDir × r), not ball centre.
   ai.aimTicks = 0;
   ai.kickHoldTicks = 0;
-  const offset = TUNE.APPROACH_OFFSET;
-  const dy = sy - ball.y;
-  const lateralSign = dy >= 0 ? 1 : -1;
-  const targetX = ball.x - attackDir * offset * 0.3;  // slightly behind the ball
-  const targetY = ball.y + lateralSign * offset;       // offset to the side
-  const toTarget = angleTo(sx, sy, targetX, targetY);
+  const ap = chaseApproachPoint(ball, targetGoalX, sx, sy);
+  const apDist = distanceTo(sx, sy, ap.x, ap.y);
+  const aimAng = apDist < TUNE.APPROACH_ARRIVE_EPS ? toBall : angleTo(sx, sy, ap.x, ap.y);
   return limitCommand(
-    moveToward(yaw, toTarget, TUNE.CHASE_SPEED),
-    turnToward(yaw, toTarget),
+    moveToward(yaw, aimAng, TUNE.CHASE_SPEED),
+    turnToward(yaw, aimAng),
   );
 }
 
 /**
- * Formation: RETURN to slot (merged forward RETURN + defender GUARD/SUPPORT).
- * Non-chaser field ducks hold formation positions.
+ * Formation / support: non-chaser field ducks.
+ * Own half → cover/retreat slot. Attack half → TIGERs-style support lane near
+ * the ball. High press (SECOND_PRESS_DIST) → soft second contest.
  */
 function formationDecide(duck, ctx) {
   const [sx, sy] = duckXY(duck);
   const yaw = duck.yaw || 0;
   const { ball, attackDir, defendGoalX, targetGoalX, allDucks, team } = ctx;
 
-  // Compute formation slot based on ball position
   const ballInOwnHalf = ball.x * attackDir < 0;
   const spawnX = duck.spawnX != null ? duck.spawnX : (attackDir > 0 ? -0.8 : 0.8);
   const spawnY = duck.spawnY != null ? duck.spawnY : 0;
-
-  let slotX, slotY;
-  if (ballInOwnHalf) {
-    // Defensive: pull back toward own half
-    slotX = attackDir * Math.max(Math.abs(spawnX), 1.0) + TUNE.FORMATION_X_RETREAT * attackDir;
-    slotY = spawnY;
-  } else {
-    // Attacking: push into opponent half
-    slotX = attackDir * Math.max(Math.abs(spawnX), 1.0) + TUNE.FORMATION_X_ADVANCE * attackDir;
-    slotY = spawnY;
-  }
-
-  // Clamp slot to field bounds
-  slotX = clamp(slotX, -FIELD_HALF_L + 0.3, FIELD_HALF_L - 0.3);
 
   // Defender-specific: GUARD / INTERCEPT / CLEAR / SUPPORT
   if (duck.role === 'defender') {
     return defenderFormation(duck, ctx, sx, sy, yaw, ball, attackDir, defendGoalX, targetGoalX, allDucks, team);
   }
 
+  const bd = distToBall(duck, ball);
+
+  // High press: second player soft-contests loose ball (does not shoot — chaser owns kick).
+  if (
+    !ballInOwnHalf &&
+    TUNE.SECOND_PRESS_DIST > 0 &&
+    bd < TUNE.SECOND_PRESS_DIST &&
+    bd > TUNE.SHOOT_DIST
+  ) {
+    const toB = angleToBall(duck, ball);
+    return limitCommand(
+      moveToward(yaw, toB, TUNE.CHASE_SPEED * 0.85),
+      turnToward(yaw, toB),
+    );
+  }
+
+  let slotX, slotY;
+  if (ballInOwnHalf) {
+    // Defensive cover: pull back toward own half (spawn-anchored)
+    slotX = attackDir * Math.max(Math.abs(spawnX), 1.0) + TUNE.FORMATION_X_RETREAT * attackDir;
+    slotY = spawnY;
+  } else {
+    // Attack support lane near the ball (not a deep static spawn mirror)
+    const slot = supportSlot(duck, ctx);
+    slotX = slot.x;
+    slotY = slot.y;
+    // Blend a little of formation advance so style overlays still matter
+    slotX += TUNE.FORMATION_X_ADVANCE * attackDir * 0.35;
+    slotX = clamp(slotX, -FIELD_HALF_L + 0.3, FIELD_HALF_L - 0.3);
+  }
+
   const atSlot = distanceTo(sx, sy, slotX, slotY) < TUNE.FORMATION_SLOT_EPS;
   if (atSlot) {
-    // Parked: face the play
     return limitCommand(0, turnToward(yaw, attackDir > 0 ? 0 : Math.PI));
   }
   const toSlot = angleTo(sx, sy, slotX, slotY);
@@ -438,18 +559,27 @@ function applyAntiStuck(cmd) {
 /**
  * Compute locomotion commands for one team's ducks this tick.
  * @param {Array} ducks  Team ducks: [{id, pos:[x,y], yaw, role, fallen, penalized, team, spawnX?, spawnY?, _ai?}]
- * @param {Object} gs    {ball:{x,y,vx,vy}, allDucks:[...], team, time?}
+ * @param {Object} gs    {ball:{x,y,vx,vy}, allDucks:[...], team, time?, tuneOverlay?}
  * @returns {Array<{vx:number, wz:number, kick:boolean}>}
  */
 export function decideAll(ducks, gs) {
   if (!ducks || !ducks.length) return [];
-  const ctx = buildCtx(ducks, gs);
-  return ducks.map(d => {
-    if (d.fallen || d.penalized) return { vx: 0, wz: 0, kick: false };
-    if (d.role === 'goalkeeper') return gkDecide(d, ctx);
-    if (d.id === ctx.chaserId) return chaserDecide(d, ctx);
-    return formationDecide(d, ctx);
-  }).map(cmd => applyAntiStuck(cmd));
+  const prevTune = TUNE;
+  const overlay = gs?.tuneOverlay;
+  TUNE = overlay && Object.keys(overlay).length
+    ? { ...BASE_TUNE, ...overlay }
+    : BASE_TUNE;
+  try {
+    const ctx = buildCtx(ducks, gs);
+    return ducks.map(d => {
+      if (d.fallen || d.penalized) return { vx: 0, wz: 0, kick: false };
+      if (d.role === 'goalkeeper') return gkDecide(d, ctx);
+      if (d.id === ctx.chaserId) return chaserDecide(d, ctx);
+      return formationDecide(d, ctx);
+    }).map(cmd => applyAntiStuck(cmd));
+  } finally {
+    TUNE = prevTune;
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

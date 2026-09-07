@@ -25,6 +25,9 @@ import { INK, ORANGE, MONO } from "../theme.js";
 import { ComicButton, ComicTitle, HalftoneRamp, ANTON, CREAM } from "../ui/comic.jsx";
 import { PreorderButton } from "../ui/Hud.jsx";
 import { GitHubLink } from "../ui/GitHubLink.jsx";
+import StrategyPanel from "./StrategyPanel.jsx";
+import LangToggle from "./LangToggle.jsx";
+import { t } from "./i18n.js";
 
 const rowIn = keyframes`
   from { transform: translateY(12px); opacity: 0; }
@@ -68,11 +71,7 @@ const Kbd = styled("kbd")(() => ({
 
 // Spectator cheat strip: football has no manual control (AI drives all six
 // ducks), so the arcade instruction card lists camera verbs only.
-const SPECTATOR_SHORTCUTS = [
-  { caps: ["Scroll"], name: "Zoom" },
-  { caps: ["Drag"], name: "Orbit" },
-  { caps: ["R"], name: "Reset Camera" },
-];
+// Labels come from i18n at render time.
 
 // #rrggbb -> rgba() at the halftone's alpha.
 const tint = (hex, a) =>
@@ -84,6 +83,8 @@ export default function FootballTitle({ onKickOff }) {
   const bootFailed = useGame((s) => s.bootFailed);
   const padConnected = useGame((s) => s.padConnected);
   const touchMode = useGame((s) => s.touchMode);
+  const entered = useGame((s) => s.entered);
+  const locale = useGame((s) => s.locale) || "en";
   const [closing, setClosing] = useState(false);
   const prevOpen = useRef(menuOpen);
   // Latches once the kickoff has fired, so a pause reopen reads "Resume"
@@ -227,8 +228,18 @@ export default function FootballTitle({ onKickOff }) {
   if (!menuOpen && !closing) return null;
 
   // After the first kickoff the overlay is a pause screen.
-  const ctaLabel = kickoffFired.current ? "Resume" : "Kick Off";
-  const enterHint = padConnected ? "press A" : touchMode ? null : "press Enter";
+  const ctaLabel = kickoffFired.current ? t(locale, "resume") : t(locale, "kickOff");
+  const enterHint = padConnected
+    ? t(locale, "pressA")
+    : touchMode
+      ? null
+      : t(locale, "pressEnter");
+
+  const SPECTATOR = [
+    { caps: ["Scroll"], name: t(locale, "zoom") },
+    { caps: ["Drag"], name: t(locale, "orbit") },
+    { caps: ["R"], name: t(locale, "resetCamera") },
+  ];
 
   return (
     <Box
@@ -329,6 +340,7 @@ export default function FootballTitle({ onKickOff }) {
       )}
       {ready && <PreorderButton sx={{ ...row(0.1) }} />}
       {ready && <GitHubLink sx={{ ...row(0.18) }} />}
+      {ready && <LangToggle sx={{ ...row(0.22) }} />}
 
       {/* Boot gate: one centered spinner on bare ink with the match's
           step line until fonts, brand art and the game core are in. A
@@ -366,7 +378,7 @@ export default function FootballTitle({ onKickOff }) {
               color: "rgba(255, 255, 255, 0.5)",
             }}
           >
-            Loading teams...
+            {t(locale, "loadingTeams")}
           </Typography>
         </Box>
       )}
@@ -403,7 +415,7 @@ export default function FootballTitle({ onKickOff }) {
               ...row(0.08),
             }}
           >
-            Boot failed - reload to retry
+            {t(locale, "bootFailed")}
           </Typography>
         ) : (
         <>
@@ -435,9 +447,12 @@ export default function FootballTitle({ onKickOff }) {
             ...row(0.24),
           }}
         >
-          Six ducks. One ball. Zero joysticks - the same trained policies
-          that drive the real robot play the whole match themselves.
+          {t(locale, "tagline")}
         </Typography>
+
+        <Box sx={{ width: "100%", ...row(0.28) }}>
+          <StrategyPanel formationLocked={!!entered} />
+        </Box>
 
         {/* CTA + key prompt travel as one block, centred under the title. */}
         <Box
@@ -445,8 +460,8 @@ export default function FootballTitle({ onKickOff }) {
             display: "inline-flex",
             flexDirection: "column",
             alignItems: "center",
-            mt: "2rem",
-            "@media (max-height: 700px)": { mt: "1.3rem" },
+            mt: "1.4rem",
+            "@media (max-height: 700px)": { mt: "1rem" },
             ...row(0.32),
           }}
         >
@@ -546,7 +561,7 @@ export default function FootballTitle({ onKickOff }) {
             },
           }}
         >
-          {SPECTATOR_SHORTCUTS.map((s) => (
+          {SPECTATOR.map((s) => (
             <Box
               key={s.name}
               sx={{
@@ -587,7 +602,7 @@ export default function FootballTitle({ onKickOff }) {
             color: "rgba(255, 255, 255, 0.34)",
           }}
         >
-          spectator mode - the ducks play themselves
+          {t(locale, "coachFooter")}
         </Typography>
       </Box>
       </>

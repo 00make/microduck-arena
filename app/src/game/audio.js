@@ -21,7 +21,10 @@ import { signed } from "./signed.js";
 // point early-returns, master gain pinned to 0, context never resumed).
 // Node-returning helpers (busNode, createEmitter) keep building their
 // graph either way so callers stay untouched.
-const SOUND_DISABLED = true;
+// Football 3v3 needs fall / kick / collision cues; keep this false so the
+// Kenney impact bank (public/assets/sfx) and voice banks can play. HUD mute
+// still works via setMuted().
+const SOUND_DISABLED = false;
 
 // ── Context, master, buses ────────────────────────────────────────────
 const MASTER_LEVEL = 0.9;

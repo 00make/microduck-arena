@@ -3,12 +3,16 @@
 // palette, zero-radius panel plates with cream keyline frames).
 import Box from "@mui/material/Box";
 import { keyframes } from "@mui/material/styles";
+import { useState } from "react";
 import { useGame } from "../store.js";
-import { uiClick } from "../game/audio.js";
+import { uiClick, isMuted, setMuted } from "../game/audio.js";
 import { ORANGE, MONO } from "../theme.js";
 import { ANTON, COMIC_INK, CREAM, COMIC_ORANGE } from "../ui/comic.jsx";
 import { GitHubLink } from "../ui/GitHubLink.jsx";
 import { formatClock, stateLabel, eventLabel, recentEvents } from "./hud-logic.js";
+import { t, teamLabel, strategyTag } from "./i18n.js";
+import StrategyBoard from "./StrategyBoard.jsx";
+import TeamFpv from "./TeamFpv.jsx";
 
 // ── Design tokens (shared with Hud.jsx language) ──────────────────────────
 const FRAME_W = 2;
@@ -94,6 +98,7 @@ function BackArrowIcon() {
 }
 
 function BackButton() {
+  const locale = useGame((s) => s.locale) || "en";
   return (
     <Box
       sx={{
@@ -102,6 +107,8 @@ function BackButton() {
         left: "1.5rem",
         zIndex: 10,
         pointerEvents: "auto",
+        display: "flex",
+        gap: "0.45rem",
       }}
     >
       <Box
@@ -143,8 +150,51 @@ function BackButton() {
             },
           }}
         >
-          <BackArrowIcon /> Back
+          <BackArrowIcon /> {t(locale, "back")}
         </Box>
+      </Box>
+      <SoundMuteButton />
+    </Box>
+  );
+}
+
+function SoundMuteButton() {
+  const [muted, setMutedState] = useState(isMuted);
+  return (
+    <Box
+      sx={{
+        ...scorePlateSx,
+        flexDirection: "row",
+        minWidth: "unset",
+        padding: "6px 12px",
+      }}
+    >
+      <Box
+        component="button"
+        type="button"
+        aria-label={muted ? "Unmute" : "Mute"}
+        aria-pressed={muted}
+        onClick={() => {
+          const next = !muted;
+          setMuted(next);
+          setMutedState(next);
+          if (!next) uiClick();
+        }}
+        sx={{
+          appearance: "none",
+          border: "none",
+          background: "transparent",
+          color: muted ? "rgba(250,248,242,0.45)" : CREAM,
+          cursor: "pointer",
+          fontFamily: MONO,
+          fontSize: "0.65rem",
+          letterSpacing: "0.1em",
+          textTransform: "uppercase",
+          lineHeight: 1,
+          "&:hover": { color: ORANGE },
+        }}
+      >
+        {muted ? "MUTED" : "SFX"}
       </Box>
     </Box>
   );
@@ -154,11 +204,12 @@ function Scoreboard() {
   const score = useGame((s) => s.score);
   const matchTime = useGame((s) => s.matchTime);
   const matchState = useGame((s) => s.matchState);
+  const locale = useGame((s) => s.locale) || "en";
 
   const red = score?.red ?? 0;
   const blue = score?.blue ?? 0;
   const time = formatClock(matchTime ?? 0);
-  const label = stateLabel(matchState);
+  const label = stateLabel(matchState, locale);
   const isGoal = matchState === "GOAL";
 
   return (
@@ -232,19 +283,32 @@ function Scoreboard() {
   );
 }
 
-// ── Full-time result sticker ──────────────────────────────────────────────
+// ── Full-time result + tactics card ───────────────────────────────────────
 // Reads store.matchResult ('red' | 'blue' | 'draw'), written by game.js on
-// the fulltime event. While it is still null the board keeps the plain
-// FULL TIME label, so the selector tolerates the field being absent.
+// the fulltime event. tacticsCard freezes possession / shots / strategy tags.
 export function MatchResultBanner() {
   const matchState = useGame((s) => s.matchState);
   const matchResult = useGame((s) => s.matchResult ?? null);
+  const tacticsCard = useGame((s) => s.tacticsCard);
+  const locale = useGame((s) => s.locale) || "en";
   if (matchState !== "FULLTIME" || !matchResult) return null;
 
   const win = matchResult === "red" || matchResult === "blue";
   const accent = matchResult === "red" ? RED_ACCENT : matchResult === "blue" ? BLUE_ACCENT : COMIC_ORANGE;
-  const headline = win ? `${matchResult.toUpperCase()} WINS` : "DRAW";
-  const sub = win ? "FULL TIME — MATCH WINNER" : "FULL TIME — HONOURS EVEN";
+  const teamName = win ? teamLabel(locale, matchResult) : "";
+  const headline = win
+    ? (locale === "zh" ? `${teamName}胜` : `${matchResult.toUpperCase()} WINS`)
+    : (locale === "zh" ? "平局" : "DRAW");
+  const sub = win
+    ? (locale === "zh" ? "全场结束 — 胜方" : "FULL TIME — MATCH WINNER")
+    : (locale === "zh" ? "全场结束 — 双方战平" : "FULL TIME — HONOURS EVEN");
+
+  const redTag = strategyTag(locale, tacticsCard?.strategy?.red);
+  const blueTag = strategyTag(locale, tacticsCard?.strategy?.blue);
+  const shotsR = tacticsCard?.shots?.red ?? 0;
+  const shotsB = tacticsCard?.shots?.blue ?? 0;
+  const possPct = Math.round(clamp01(tacticsCard?.possession?.redPct ?? 0.5) * 100);
+  const hasCard = !!tacticsCard;
 
   return (
     <>
@@ -273,6 +337,7 @@ export function MatchResultBanner() {
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
+          gap: "0.65rem",
           rotate: "-1.5deg",
           animation: `${slamIn} 0.45s cubic-bezier(0.2, 1.4, 0.4, 1) both`,
           "@media (prefers-reduced-motion: reduce)": { animation: "none" },
@@ -291,7 +356,6 @@ export function MatchResultBanner() {
             padding: "10px 34px 12px",
             boxShadow: `7px 7px 0 ${COMIC_INK}, 7px 7px 0 2px ${accent}55`,
             "&::after": {
-              // Diagonal hatch texture over the glass, tinted with the accent.
               content: '""',
               position: "absolute",
               inset: 0,
@@ -330,13 +394,104 @@ export function MatchResultBanner() {
             {sub}
           </Box>
         </Box>
+
+        {hasCard ? (
+          <Box
+            sx={{
+              position: "relative",
+              boxSizing: "border-box",
+              border: `${FRAME_W}px solid ${COMIC_INK}`,
+              background: GLASS,
+              padding: "12px 22px 14px",
+              minWidth: "min(22rem, calc(100vw - 2.5rem))",
+              maxWidth: "28rem",
+              boxShadow: `5px 5px 0 ${COMIC_INK}`,
+              rotate: "1.2deg",
+            }}
+          >
+            <Box
+              sx={{
+                fontFamily: MONO,
+                fontSize: "0.5rem",
+                letterSpacing: "0.18em",
+                textTransform: "uppercase",
+                color: "rgba(250,248,242,0.5)",
+                textAlign: "center",
+                mb: "0.55rem",
+              }}
+            >
+              {t(locale, "cardSub")}
+            </Box>
+            <Box
+              sx={{
+                fontFamily: ANTON,
+                fontSize: "clamp(0.95rem, 2.8vw, 1.25rem)",
+                letterSpacing: "0.04em",
+                textAlign: "center",
+                lineHeight: 1.25,
+                color: CREAM,
+                mb: "0.65rem",
+              }}
+            >
+              <Box component="span" sx={{ color: RED_ACCENT }}>{redTag}</Box>
+              <Box
+                component="span"
+                sx={{
+                  mx: "0.45rem",
+                  fontFamily: MONO,
+                  fontSize: "0.55rem",
+                  color: "rgba(255,255,255,0.4)",
+                  verticalAlign: "middle",
+                }}
+              >
+                {t(locale, "boardVs")}
+              </Box>
+              <Box component="span" sx={{ color: BLUE_ACCENT }}>{blueTag}</Box>
+            </Box>
+            <Box
+              sx={{
+                display: "flex",
+                justifyContent: "center",
+                gap: "1.2rem",
+                fontFamily: MONO,
+                fontSize: "0.72rem",
+                letterSpacing: "0.06em",
+                color: CREAM,
+              }}
+            >
+              <Box component="span">
+                {t(locale, "boardShots")}{" "}
+                <Box component="span" sx={{ color: RED_ACCENT, fontFamily: ANTON, fontSize: "1.05rem" }}>
+                  {shotsR}
+                </Box>
+                –
+                <Box component="span" sx={{ color: BLUE_ACCENT, fontFamily: ANTON, fontSize: "1.05rem" }}>
+                  {shotsB}
+                </Box>
+              </Box>
+              <Box component="span">
+                {t(locale, "boardPoss")}{" "}
+                <Box component="span" sx={{ color: RED_ACCENT, fontFamily: ANTON, fontSize: "1.05rem" }}>
+                  {possPct}%
+                </Box>
+              </Box>
+            </Box>
+          </Box>
+        ) : null}
       </Box>
     </>
   );
 }
 
+function clamp01(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 0.5;
+  return Math.max(0, Math.min(1, n));
+}
+
 function EventTicker() {
   const matchEvents = useGame((s) => s.matchEvents);
+  const locale = useGame((s) => s.locale) || "en";
   const events = recentEvents(matchEvents, 3);
 
   if (events.length === 0) return null;
@@ -345,7 +500,7 @@ function EventTicker() {
     <Box
       sx={{
         position: "fixed",
-        bottom: "1.5rem",
+        bottom: "11.5rem",
         left: "50%",
         transform: "translateX(-50%)",
         zIndex: 10,
@@ -379,7 +534,7 @@ function EventTicker() {
             },
           }}
         >
-          {eventLabel(ev)}
+          {eventLabel(ev, locale)}
         </Box>
       ))}
     </Box>
@@ -388,6 +543,7 @@ function EventTicker() {
 
 function PenaltyIndicator() {
   const ducksState = useGame((s) => s.ducksState);
+  const locale = useGame((s) => s.locale) || "en";
   if (!ducksState) return null;
   const penalized = ducksState.filter((d) => d.penalized);
   if (penalized.length === 0) return null;
@@ -396,13 +552,16 @@ function PenaltyIndicator() {
     <Box
       sx={{
         position: "fixed",
-        top: "6.5rem",
-        left: "50%",
-        transform: "translateX(-50%)",
-        zIndex: 10,
+        top: "17.5rem",
+        right: "1.25rem",
+        left: "auto",
+        transform: "none",
+        zIndex: 12,
         pointerEvents: "none",
         display: "flex",
         gap: "8px",
+        flexDirection: "column",
+        alignItems: "flex-end",
       }}
     >
       {penalized.map((d) => (
@@ -419,7 +578,7 @@ function PenaltyIndicator() {
             textTransform: "uppercase",
           }}
         >
-          #{d.id} SIN-BIN
+          #{d.id} {t(locale, "sinBin")}
         </Box>
       ))}
     </Box>
@@ -438,15 +597,22 @@ export default function FootballHud() {
       }}
     >
       <BackButton />
+      <TeamFpv />
       <Scoreboard />
-      {/* Top-right corner is free (scoreboard centres, Back sits top-left):
-          the repo link keeps its title-screen SPOT metrics, flipped to
-          fixed and re-armed for clicks inside this pointer-events:none
-          shell. */}
-      <GitHubLink sx={{ position: "fixed", zIndex: 10, pointerEvents: "auto" }} />
+      <GitHubLink
+        sx={{
+          position: "fixed",
+          // Keep clear of blue FPV (starts ~6.85rem)
+          top: { xs: "1.15rem", md: "1.2rem" },
+          right: "1.5rem",
+          zIndex: 12,
+          pointerEvents: "auto",
+        }}
+      />
       <MatchResultBanner />
       <EventTicker />
       <PenaltyIndicator />
+      <StrategyBoard />
     </Box>
   );
 }

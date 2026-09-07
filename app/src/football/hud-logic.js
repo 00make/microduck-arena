@@ -3,6 +3,7 @@
 // ui/keyboard-layout.js / ui/keyboard-layout.test.js).
 
 import { MATCH_DURATION_S } from "../game/football/constants.js";
+import { t } from "./i18n.js";
 
 // Countdown clock: matchTime is seconds ELAPSED, the board shows what is
 // left of the regulation duration, clamped at 00:00.
@@ -26,8 +27,11 @@ export const STATE_LABELS = {
   FULLTIME: "FULL TIME",
 };
 
-export function stateLabel(matchState) {
-  if (!matchState) return STATE_LABELS.IDLE;
+export function stateLabel(matchState, locale = "en") {
+  if (!matchState) return t(locale, "state_IDLE");
+  const key = `state_${matchState}`;
+  const localized = t(locale, key);
+  if (localized !== key) return localized;
   return STATE_LABELS[matchState] ?? String(matchState).replace(/_/g, " ").toUpperCase();
 }
 
@@ -47,22 +51,30 @@ const EVENT_ICONS = {
 
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
+function teamToken(ev, locale) {
+  if (!ev.team) return "";
+  if (locale === "zh") {
+    return ev.team === "red" ? " 红队" : ev.team === "blue" ? " 蓝队" : ` ${ev.team}`;
+  }
+  return ` ${cap(ev.team)}`;
+}
+
 // One ticker line for a matchEvents entry {type, team, time, payload}.
-export function eventLabel(ev) {
+export function eventLabel(ev, locale = "en") {
   const icon = EVENT_ICONS[ev.type] || "\u2022";
-  const team = ev.team ? ` ${cap(ev.team)}` : "";
+  const team = teamToken(ev, locale);
   switch (ev.type) {
-    case "goal": return `${icon} GOAL!${team} Team scores!`;
-    case "yellow_card": return `${icon} Yellow card \u2014${team}`;
-    case "red_card": return `${icon} Red card \u2014${team}`;
-    case "corner": return `${icon} Corner kick \u2014${team}`;
+    case "goal": return `${icon} ${t(locale, "ev_goal", { team })}`;
+    case "yellow_card": return `${icon} ${t(locale, "ev_yellow", { team })}`;
+    case "red_card": return `${icon} ${t(locale, "ev_red", { team })}`;
+    case "corner":
     case "corner_red":
-    case "corner_blue": return `${icon} Corner kick \u2014${team}`;
-    case "foul": return `${icon} Foul \u2014${team}`;
-    case "penalty": return `${icon} Penalty \u2014${team}`;
-    case "kickoff": return `${icon} Kick off!`;
-    case "halftime": return `${icon} Half time`;
-    case "fulltime": return `${icon} Full time`;
+    case "corner_blue": return `${icon} ${t(locale, "ev_corner", { team })}`;
+    case "foul": return `${icon} ${t(locale, "ev_foul", { team })}`;
+    case "penalty": return `${icon} ${t(locale, "ev_penalty", { team })}`;
+    case "kickoff": return `${icon} ${t(locale, "ev_kickoff")}`;
+    case "halftime": return `${icon} ${t(locale, "ev_halftime")}`;
+    case "fulltime": return `${icon} ${t(locale, "ev_fulltime")}`;
     default: return `${icon}${team} ${String(ev.type).replace(/_/g, " ")}`;
   }
 }

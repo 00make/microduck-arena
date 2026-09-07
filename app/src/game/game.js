@@ -63,13 +63,21 @@ import { createBallVisual } from "./ball-visual.js";
 // goal-openings branch only runs when fieldConfig.walls asks for it).
 import { getGoalCollisionGeoms, createGoalMesh } from "./football/goal.js";
 import { GOAL_WIDTH, SPAWN_POSITIONS, BALL_SPAWN, PENALTY_DURATION_S, FIELD_HALF_W } from "./football/constants.js";
+import {
+  DEFAULT_STRATEGY,
+  buildSpawnTable,
+  getTuneOverlay,
+  normalizeStrategy,
+  strategiesForUser,
+} from "./football/strategy.js";
+import { buildTacticsBoard, createMatchStats } from "./football/tactics-board.js";
 // Multi-duck match plumbing: SANDBOX_CONFIG is the default matchConfig that
 // reproduces the single-duck arena exactly; FOOTBALL_CONFIG (passed in by
 // FootballCanvas) drives the 3v3 pitch. createDuckInstance holds per-duck
 // runtime state; createAgent builds the role-specific AI.
 import { SANDBOX_CONFIG } from "./football/match-config.js";
 import { createDuckInstance } from "./football/duck-instance.js";
-import { createAgent, decideAll } from "./football/ai/index.js";
+import { createAgent, decideAll, assignChaserId } from "./football/ai/index.js";
 import { createReferee } from "./football/referee.js";
 import { createCelebration } from "./football/celebration.js";
 import { initStickers } from "./stickers.js";
@@ -198,6 +206,15 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
   const isFootball = matchConfig.mode === "football";
   const setStore = useGame.setState;
   const store = useGame.getState;
+
+  // Coach tactics: mutable spawn table + per-team strategy. Style/press apply
+  // every AI tick; formation roles/spawns apply at kickoff (locked after start).
+  let activeSpawns = SPAWN_POSITIONS.map((s) => ({ ...s }));
+  let strategyByTeam = strategiesForUser(
+    store().userTeam || "red",
+    store().userStrategy || DEFAULT_STRATEGY,
+  );
+  let formationLocked = false;
 
   bootNote("Microduck BIOS v1.0");
   bootLine("MEMORY CHECK")("640K OK");
@@ -651,7 +668,7 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
   // snapshot and writes a locomotion twist (+ occasional kick) onto the duck.
   if (matchConfig.ai) {
     for (const duck of ducks) {
-      const s = SPAWN_POSITIONS[duck.id];
+      const s = activeSpawns[duck.id] || SPAWN_POSITIONS[duck.id];
       duck.agent = createAgent(duck, {
         team: duck.team, role: duck.role, spawnX: s.x, spawnY: s.y,
       });
@@ -703,6 +720,7 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
   // ── Football: referee integration state ──
   let referee = null;
   let celebration = null;
+  let matchStats = isFootball ? createMatchStats() : null;
   let prevBallX = 0, prevBallY = 0;
   let matchStoreTick = 0;
 
@@ -1282,10 +1300,23 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
         if (++duck.fallDebounce >= FALL_DEBOUNCE_STEPS) {
           duck.fallDebounce = 0;
           duck.recovery = { state: "fallen", steps: 0 };
+          // Soft body thud (same Kenney thump bank as sandbox bumps).
+          playSfx("thump", {
+            gain: 0.28,
+            rate: 0.48 + Math.random() * 0.08,
+          });
+          haptics.pulse("fall");
         }
       } else {
         duck.fallDebounce = 0;
         const now = performance.now();
+        if (duck.fallenSince == null) {
+          playSfx("thump", {
+            gain: 0.28,
+            rate: 0.48 + Math.random() * 0.08,
+          });
+          haptics.pulse("fall");
+        }
         duck.fallenSince ??= now;
         if (now - duck.fallenSince > 1000) resetDuck(duck);
       }
@@ -1366,7 +1397,7 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
     // fallen, penalized, team, spawnX, spawnY, _ai }. _ai is persisted on the
     // real duck so the AIM fuse (aimTicks) survives across ticks.
     const views = teamDucks.map((d) => {
-      const sp = SPAWN_POSITIONS[d.id] || {};
+      const sp = activeSpawns[d.id] || SPAWN_POSITIONS[d.id] || {};
       if (!d._ai) d._ai = { aimTicks: 0, stallTicks: 0, escapeTicks: 0, prevX: 0, prevY: 0 };
       return {
         id: d.id,
@@ -1381,7 +1412,14 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
         _ai: d._ai,
       };
     });
-    const cmds = decideAll(views, { ball: gs.ball, allDucks: gs.ducks, team: teamDucks[0].team });
+    const team = teamDucks[0].team;
+    const tuneOverlay = getTuneOverlay(strategyByTeam[team] || DEFAULT_STRATEGY);
+    const cmds = decideAll(views, {
+      ball: gs.ball,
+      allDucks: gs.ducks,
+      team,
+      tuneOverlay,
+    });
     for (let i = 0; i < teamDucks.length; i++) {
       const duck = teamDucks[i];
       const c = cmds[i] || { vx: 0, wz: 0, kick: false };
@@ -1403,6 +1441,18 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
         duck.mode = duck._lastKick === "kickL" ? "kickR" : "kickL";
         duck._lastKick = duck.mode;
         duck.kickRun = { steps: 0 };
+        // Swing whoosh — ball contact thump is handled in stepAudioFootball.
+        playSfx("thump", {
+          gain: 0.18,
+          rate: 1.35 + Math.random() * 0.2,
+        });
+        haptics.pulse("kick");
+        // Only goal-aimed strikes (at feet + facing opp goal + attacking half).
+        matchStats?.tryNoteShot(duck.team, gs.ball, {
+          x: Number.isFinite(duck.pos?.[0]) ? duck.pos[0] : 0,
+          y: Number.isFinite(duck.pos?.[1]) ? duck.pos[1] : 0,
+          yaw: Number.isFinite(duck.yaw) ? duck.yaw : 0,
+        });
       }
     }
   }
@@ -1532,7 +1582,7 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
   }
 
   function returnDuckFromPenalty(duck) {
-    const sp = SPAWN_POSITIONS[duck.id];
+    const sp = activeSpawns[duck.id] || SPAWN_POSITIONS[duck.id];
     placeDuck(duck, [sp.x, sp.y, 0.12], sp.yaw ?? 0);
     // Full per-duck state reset (mirrors executeKickoff) so the duck
     // doesn't re-enter play with stale recovery/action state that would
@@ -1553,11 +1603,14 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
 
   function executeKickoff() {
     placeBall(BALL_SPAWN);
+    // Apply formation roles/spawns at each kickoff so pre-match coach choices
+    // (and a fresh match restart) stick; mid-match style/press already live.
+    applyFormationFromStrategies();
     for (const duck of ducks) {
       // Sent-off ducks stay off for good; sin-binned ducks keep their spot
       // (and their ticking timer) until penalty_returned brings them back.
       if (duck.sentOff || duck.penaltyTimer > 0) continue;
-      const sp = SPAWN_POSITIONS[duck.id];
+      const sp = activeSpawns[duck.id] || SPAWN_POSITIONS[duck.id];
       placeDuck(duck, [sp.x, sp.y, 0.12], sp.yaw ?? 0);
       duck.recovery = null;
       duck.fallDebounce = 0;
@@ -1583,6 +1636,53 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
     if (payload.pos) placeBall(payload.pos);
     prevBallX = payload.pos ? payload.pos[0] : prevBallX;
     prevBallY = payload.pos ? payload.pos[1] : prevBallY;
+  }
+
+  /** Rebuild activeSpawns + duck roles/agents from strategyByTeam. */
+  function applyFormationFromStrategies() {
+    if (!isFootball) return;
+    activeSpawns = buildSpawnTable(strategyByTeam);
+    for (const duck of ducks) {
+      const sp = activeSpawns[duck.id];
+      if (!sp) continue;
+      duck.role = sp.role;
+      duck.agent = createAgent(duck, {
+        team: duck.team, role: duck.role, spawnX: sp.x, spawnY: sp.y,
+      });
+    }
+  }
+
+  /**
+   * Coach panel → game. Style/press take effect next AI tick.
+   * Formation changes only apply when not locked (pre-kickoff / fresh match).
+   */
+  function setTeamStrategy(partial = {}, opts = {}) {
+    if (!isFootball) return store().userStrategy;
+    const allowFormation = !formationLocked || opts.forceFormation;
+    const prev = normalizeStrategy(store().userStrategy || DEFAULT_STRATEGY);
+    const next = normalizeStrategy({
+      ...prev,
+      ...partial,
+      formation: allowFormation
+        ? (partial.formation ?? prev.formation)
+        : prev.formation,
+    });
+    const team = opts.team || store().userTeam || "red";
+    setStore({ userTeam: team, userStrategy: next });
+    strategyByTeam = strategiesForUser(team, next);
+    if (allowFormation && next.formation !== prev.formation) {
+      applyFormationFromStrategies();
+    }
+    return next;
+  }
+
+  function setUserTeam(team) {
+    if (team !== "red" && team !== "blue") return store().userTeam;
+    const strat = store().userStrategy || DEFAULT_STRATEGY;
+    setStore({ userTeam: team });
+    strategyByTeam = strategiesForUser(team, strat);
+    if (!formationLocked) applyFormationFromStrategies();
+    return team;
   }
 
   function handleRefereeEvent(type, payload) {
@@ -1612,7 +1712,7 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
       case "kickoff": {
         // A fresh kick-off clears any stale winner from the previous match so
         // the UI never shows an outdated result during open play.
-        setStore({ matchResult: null });
+        setStore({ matchResult: null, tacticsCard: null });
         executeKickoff();
         break;
       }
@@ -1695,10 +1795,20 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
         // Persist the winner ('red' | 'blue' | 'draw') so the UI can show the
         // result; the referee owns the verdict, the event payload is a fallback.
         const result = referee?.getResult?.() ?? payload?.result ?? null;
+        const scoreNow = referee.getScore();
+        const card = matchStats
+          ? buildTacticsBoard({
+            stats: matchStats,
+            strategyByTeam,
+            score: scoreNow,
+          })
+          : null;
         setStore({
           matchState: "FULLTIME",
-          score: referee.getScore(),
+          score: scoreNow,
           matchResult: result,
+          tacticsBoard: card,
+          tacticsCard: card,
         });
         celebration?.cancel();
         break;
@@ -1808,6 +1918,10 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
       referee.step(CTRL_DT, gs);
       prevBallX = gs.ball.pos[0];
       prevBallY = gs.ball.pos[1];
+      matchStats?.tick(CTRL_DT, {
+        matchState: referee.getState(),
+        lastTouchTeam: referee.getLastTouchTeam(),
+      });
     }
     for (const duck of ducks) updateDuckStateFootball(duck);
     // Ball watchdog: a solver glitch that tunnels the ball out of the pitch
@@ -1822,6 +1936,86 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
     }
     // Perf gate: measures realised ctrlHz over a 2 s window, degrades once.
     maybeDegradePerf(performance.now());
+    // Football SFX: ball impacts, duck–duck bumps (teammate vs opponent).
+    stepAudioFootball();
+  }
+
+  // ── Football-only audio (multi-duck) ─────────────────────────────────
+  // Sandbox stepAudioSim() is single-duck + arena walls; here we only need
+  // ball thumps and body collisions. Fall / kick one-shots fire at the
+  // state transitions above. Uses the same Kenney thump bank as the official
+  // arena assets (public/assets/sfx) — microduck_sounds is vocalisations.
+  const FB_BALL_DV = 0.5;
+  const FB_BALL_DEBOUNCE_MS = 90;
+  const FB_HIT_DIST = 0.32;       // trunk centres closer than this ≈ contact
+  const FB_HIT_REL_V = 0.22;      // m/s closing speed to count as a bump
+  const FB_HIT_DEBOUNCE_MS = 280;
+  const fbBallPrevV = [0, 0, 0];
+  let fbBallPrevValid = false;
+  let fbBallThumpAt = 0;
+  const fbHitAt = new Map(); // "i-j" -> last ms
+
+  function stepAudioFootball() {
+    const now = performance.now();
+    const v = data.qvel;
+    // Ball impacts (kick contact, wall bounce, duck shove).
+    if (ballActive) {
+      const b = ballDofAdr;
+      if (fbBallPrevValid) {
+        const dv = Math.hypot(
+          v[b] - fbBallPrevV[0], v[b + 1] - fbBallPrevV[1], v[b + 2] - fbBallPrevV[2]);
+        if (dv > FB_BALL_DV && now - fbBallThumpAt > FB_BALL_DEBOUNCE_MS) {
+          fbBallThumpAt = now;
+          const u = Math.min(1, (dv - FB_BALL_DV) / 3.5);
+          playSfx("thump", {
+            gain: 0.16 + 0.42 * u,
+            rate: 1.2 - 0.4 * u + Math.random() * 0.08,
+            out: ballEmitter.node,
+          });
+        }
+      }
+      fbBallPrevV[0] = v[b]; fbBallPrevV[1] = v[b + 1]; fbBallPrevV[2] = v[b + 2];
+      fbBallPrevValid = true;
+    } else {
+      fbBallPrevValid = false;
+    }
+
+    // Duck–duck collisions: pairwise distance + relative planar speed.
+    for (let i = 0; i < ducks.length; i++) {
+      const a = ducks[i];
+      if (a.penaltyTimer > 0 || a.sentOff) continue;
+      const da = a.addrs.freejointDofAdr;
+      const ax = a.pos[0], ay = a.pos[1];
+      const avx = v[da], avy = v[da + 1];
+      for (let j = i + 1; j < ducks.length; j++) {
+        const bDuck = ducks[j];
+        if (bDuck.penaltyTimer > 0 || bDuck.sentOff) continue;
+        const dx = bDuck.pos[0] - ax;
+        const dy = bDuck.pos[1] - ay;
+        const dist = Math.hypot(dx, dy);
+        if (dist > FB_HIT_DIST || dist < 1e-4) continue;
+        const db = bDuck.addrs.freejointDofAdr;
+        const rvx = v[db] - avx;
+        const rvy = v[db + 1] - avy;
+        // Closing component along the separation vector.
+        const closing = -(rvx * dx + rvy * dy) / dist;
+        if (closing < FB_HIT_REL_V) continue;
+        const key = `${i}-${j}`;
+        const last = fbHitAt.get(key) || 0;
+        if (now - last < FB_HIT_DEBOUNCE_MS) continue;
+        fbHitAt.set(key, now);
+        const sameTeam = a.team === bDuck.team;
+        const u = Math.min(1, (closing - FB_HIT_REL_V) / 0.8);
+        // Teammate bumps: softer / higher; opponent: heavier thud.
+        playSfx("thump", {
+          gain: sameTeam ? (0.1 + 0.18 * u) : (0.18 + 0.32 * u),
+          rate: sameTeam
+            ? (0.95 + 0.2 * Math.random())
+            : (0.55 + 0.15 * u + Math.random() * 0.08),
+        });
+      }
+    }
+    haptics.tick();
   }
 
   // Sync one duck's render rig from qpos (per-duck version of syncRig).
@@ -1839,6 +2033,12 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
   function frameFootball(dt) {
     for (const duck of ducks) syncOneRig(duck);
     if (ball) ball.sync(data.qpos, ballQposAdr, ballActive);
+    // Spatial audio: listener on camera, ball emitter for thumps.
+    updateListener(camera);
+    if (ballActive) {
+      const q = data.qpos;
+      ballEmitter.setPosition(q[ballQposAdr], q[ballQposAdr + 2], -q[ballQposAdr + 1]);
+    }
     // Celebration camera override (goal replay swing)
     if (celebration?.isActive()) {
       celebration.drive(dt);
@@ -1857,15 +2057,37 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
     matchStoreTick += dt;
     if (matchStoreTick > 0.25 && referee) {
       matchStoreTick = 0;
-      setStore({
+      const fin = (x) => (Number.isFinite(x) ? x : 0);
+      const duckSnap = ducks.map((d) => ({
+        id: d.id,
+        team: d.team,
+        role: d.role,
+        x: fin(d.pos[0]),
+        y: fin(d.pos[1]),
+        yaw: fin(d.yaw),
+        fallen: !!d.recovery,
+        penalized: d.penaltyTimer > 0,
+        sentOff: !!d.sentOff,
+      }));
+      const q = data.qpos;
+      const lastTouch = referee.getLastTouchTeam();
+      const stateNow = referee.getState();
+      const patch = {
         matchTime: referee.getMatchTime(),
-        matchState: referee.getState(),
-        lastTouchTeam: referee.getLastTouchTeam(),
-        ducksState: ducks.map((d) => ({
-          id: d.id, team: d.team, role: d.role,
-          penalized: d.penaltyTimer > 0, sentOff: d.sentOff,
-        })),
-      });
+        matchState: stateNow,
+        lastTouchTeam: lastTouch,
+        ducksState: duckSnap,
+        ballState: { x: fin(q[ballQposAdr]), y: fin(q[ballQposAdr + 1]) },
+      };
+      // Freeze the live board once fulltime — tacticsCard owns the final view.
+      if (matchStats && stateNow !== "FULLTIME") {
+        patch.tacticsBoard = buildTacticsBoard({
+          stats: matchStats,
+          strategyByTeam,
+          score: referee.getScore(),
+        });
+      }
+      setStore(patch);
     }
   }
 
@@ -3082,6 +3304,145 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
     return true;
   }
 
+  // ── Dual team FPV (chaser eye-cams → HUD <canvas> via RenderTarget) ─
+  // Scissor-into-main-canvas failed (transparent holes just showed the
+  // overview cam, and Back/GitHub sat in the windows). Opaque canvases +
+  // RT blit are reliable.
+  let fpvSlots = null; // { red: HTMLCanvasElement, blue: HTMLCanvasElement }
+  const FPV_RT_W = 320;
+  const FPV_RT_H = 200;
+  const fpvCamRed = new THREE.PerspectiveCamera(68, FPV_RT_W / FPV_RT_H, 0.03, 24);
+  const fpvCamBlue = new THREE.PerspectiveCamera(68, FPV_RT_W / FPV_RT_H, 0.03, 24);
+  const fpvRt = new THREE.WebGLRenderTarget(FPV_RT_W, FPV_RT_H, {
+    type: THREE.UnsignedByteType,
+    format: THREE.RGBAFormat,
+    depthBuffer: true,
+    stencilBuffer: false,
+  });
+  const fpvPixelBuf = new Uint8Array(FPV_RT_W * FPV_RT_H * 4);
+  const fpvFlipBuf = new Uint8ClampedArray(FPV_RT_W * FPV_RT_H * 4);
+  const _fpvEye = new THREE.Vector3();
+  const _fpvLook = new THREE.Vector3();
+  const FPV_EYE_H = 0.16;
+  const FPV_LOOK_AHEAD = 1.35;
+  const FPV_LOOK_DOWN = 0.08;
+  let fpvAcc = 0;
+  const FPV_PERIOD = 1 / 18; // ~18 Hz is enough for PiP
+
+  function setFpvSlots(slots) {
+    fpvSlots = slots;
+  }
+
+  function pickTeamChaser(team) {
+    if (!isFootball || !ducks.length) return null;
+    const q = data.qpos;
+    const ball = {
+      x: Number.isFinite(q[ballQposAdr]) ? q[ballQposAdr] : 0,
+      y: Number.isFinite(q[ballQposAdr + 1]) ? q[ballQposAdr + 1] : 0,
+    };
+    const teamDucks = ducks
+      .filter((d) => d.team === team && !(d.penaltyTimer > 0) && !d.sentOff)
+      .map((d) => ({
+        id: d.id,
+        role: d.role,
+        yaw: Number.isFinite(d.yaw) ? d.yaw : 0,
+        fallen: !!d.recovery,
+        penalized: false,
+        sentOff: false,
+        pos: [
+          Number.isFinite(d.pos[0]) ? d.pos[0] : 0,
+          Number.isFinite(d.pos[1]) ? d.pos[1] : 0,
+        ],
+      }));
+    const id = assignChaserId(teamDucks, ball);
+    if (id < 0) {
+      // Fallback: any standing field duck, else any teammate with a rig
+      return ducks.find((d) => d.team === team && d.role !== "goalkeeper" && !d.recovery)
+        || ducks.find((d) => d.team === team) || null;
+    }
+    return ducks.find((d) => d.id === id) || null;
+  }
+
+  function placeFpvCam(cam, duck) {
+    if (!duck?.rig) return false;
+    const trunk = duck.rig.bodies.get("trunk_base");
+    if (!trunk) return false;
+    trunk.updateWorldMatrix(true, false);
+    trunk.getWorldPosition(_fpvEye);
+    _fpvEye.y += FPV_EYE_H;
+    const yaw = Number.isFinite(duck.yaw) ? duck.yaw : 0;
+    // MJCF forward (cos,sin,0) → three (cos, 0, -sin)
+    _fpvLook.set(
+      _fpvEye.x + Math.cos(yaw) * FPV_LOOK_AHEAD,
+      _fpvEye.y - FPV_LOOK_DOWN,
+      _fpvEye.z - Math.sin(yaw) * FPV_LOOK_AHEAD,
+    );
+    cam.position.copy(_fpvEye);
+    cam.up.set(0, 1, 0);
+    cam.lookAt(_fpvLook);
+    cam.updateMatrixWorld();
+    return true;
+  }
+
+  function blitRtToCanvas(canvas) {
+    if (!canvas?.getContext) return;
+    renderer.readRenderTargetPixels(fpvRt, 0, 0, FPV_RT_W, FPV_RT_H, fpvPixelBuf);
+    // WebGL is bottom-up; canvas ImageData is top-down — flip rows.
+    const row = FPV_RT_W * 4;
+    for (let y = 0; y < FPV_RT_H; y++) {
+      const src = (FPV_RT_H - 1 - y) * row;
+      fpvFlipBuf.set(fpvPixelBuf.subarray(src, src + row), y * row);
+    }
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    if (canvas.width !== FPV_RT_W) canvas.width = FPV_RT_W;
+    if (canvas.height !== FPV_RT_H) canvas.height = FPV_RT_H;
+    ctx.putImageData(new ImageData(fpvFlipBuf, FPV_RT_W, FPV_RT_H), 0, 0);
+  }
+
+  function renderOneFpv(team, cam, canvas) {
+    if (!canvas) return;
+    const duck = pickTeamChaser(team);
+    if (!placeFpvCam(cam, duck)) {
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.fillStyle = "#050508";
+        ctx.fillRect(0, 0, canvas.width || FPV_RT_W, canvas.height || FPV_RT_H);
+      }
+      return;
+    }
+    const hid = duck?.rig?.placer;
+    const wasVis = hid ? hid.visible : true;
+    if (hid) hid.visible = false;
+    const prev = renderer.getRenderTarget();
+    const prevColor = new THREE.Color();
+    renderer.getClearColor(prevColor);
+    const prevAlpha = renderer.getClearAlpha();
+    renderer.setClearColor(0x08080c, 1);
+    renderer.setRenderTarget(fpvRt);
+    renderer.clear();
+    renderer.render(scene, cam);
+    renderer.setRenderTarget(prev);
+    renderer.setClearColor(prevColor, prevAlpha);
+    if (hid) hid.visible = wasVis;
+    blitRtToCanvas(canvas);
+  }
+
+  function renderTeamFpv(dt = FPV_PERIOD) {
+    if (!isFootball || !fpvSlots || !renderer) return;
+    fpvAcc += dt;
+    if (fpvAcc < FPV_PERIOD) return;
+    fpvAcc = 0;
+    // Prefer live DOM query so late boot / remount still finds canvases.
+    const red = fpvSlots.red
+      || document.querySelector("canvas[data-fpv='red']");
+    const blue = fpvSlots.blue
+      || document.querySelector("canvas[data-fpv='blue']");
+    if (!red && !blue) return;
+    renderOneFpv("red", fpvCamRed, red);
+    renderOneFpv("blue", fpvCamBlue, blue);
+  }
+
   function syncButtons() {
     const sitting = mode === "sitstand" && sitFlag === 1;
     const label =
@@ -3117,6 +3478,18 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
     resetSim,
     spawnBall: () => spawnBall(),
     startEntrance: () => ceremony?.startEntrance(),
+    // Coach tactics (football only)
+    setTeamStrategy: (partial, opts) => setTeamStrategy(partial, opts),
+    setUserTeam: (team) => setUserTeam(team),
+    setFpvSlots,
+    renderTeamFpv,
+    getStrategy: () => ({
+      userTeam: store().userTeam,
+      userStrategy: store().userStrategy,
+      strategyByTeam: { ...strategyByTeam },
+      formationLocked,
+      activeSpawns: activeSpawns.map((s) => ({ ...s })),
+    }),
   });
 
   // Deterministic hooks for automated verification (rAF pauses in
@@ -3229,6 +3602,15 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
           duck.cards.yellow = 0;
           duck.cards.red = 0;
         }
+        // Sync coach choices, then lock formation for the rest of the match.
+        strategyByTeam = strategiesForUser(
+          store().userTeam || "red",
+          store().userStrategy || DEFAULT_STRATEGY,
+        );
+        applyFormationFromStrategies();
+        formationLocked = true;
+        matchStats?.reset();
+        setStore({ tacticsCard: null, tacticsBoard: null, matchResult: null });
         if (referee) referee.startMatch();
         else { cacheDuckPoses(); spawnBallFootball(); }
       },
