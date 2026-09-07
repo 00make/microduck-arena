@@ -1,13 +1,3 @@
----
-title: Microduck Arena
-emoji: 🐤
-colorFrom: yellow
-colorTo: gray
-sdk: docker
-app_port: 8080
-pinned: false
----
-
 🌐 English | [中文](README_zh.md)
 
 # Microduck Arena
