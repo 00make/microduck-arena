@@ -2,7 +2,7 @@
 
 ## 🚀 Deployment
 
-- [ ] Push to GitHub (`git add . && git commit -m "Initial commit" && git push`)
+- [x] Push to GitHub (`git add . && git commit -m "Initial commit" && git push`)
 - [ ] Set up Cloudflare Pages project
   - Build command: `cd app && npm ci && npm run build`
   - Build output: `app/dist`
@@ -10,7 +10,7 @@
   - Custom domain: `microduck-arena.com`
 - [ ] Configure DNS: point `microduck-arena.com` → Cloudflare Pages
 - [ ] Verify HF Spaces Docker rebuild with new nginx.conf
-- [ ] Set up GitHub Actions CI (npm test + npm run test:headless)
+- [x] Set up GitHub Actions CI (npm test + npm run test:headless)
 
 ## 📸 Assets
 
@@ -32,8 +32,8 @@
 
 ## 🔧 Code Improvements
 
-- [ ] Self-host Anton font (remove Google Fonts CDN dependency)
-- [ ] Add HTML meta tags (favicon, description, Open Graph)
-- [ ] Add WASM preload hints in index.html
-- [ ] Fix vite.config.js stale comment (if not already done)
-- [ ] Set up CI/CD pipeline
+- [x] Self-host Anton font (remove Google Fonts CDN dependency)
+- [x] Add HTML meta tags (favicon, description, Open Graph)
+- [x] Add WASM preload hints in index.html
+- [x] Fix vite.config.js stale comment (verified: comment is accurate, no change needed)
+- [x] Set up CI/CD pipeline

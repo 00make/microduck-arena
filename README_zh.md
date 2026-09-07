@@ -18,7 +18,7 @@
 ## ✨ 特性亮点
 
 - 🦆 **浏览器原生物理仿真** — MuJoCo 编译为 WebAssembly，完整刚体动力学以 50Hz 运行
-- 🧠 **9 个神经网络策略** — onnxruntime-web（wasm-simd-threaded）驱动行走、踢球、翻滚等动作
+- 🧠 **9 个神经网络策略** — onnxruntime-web（wasm-simd，单线程执行）驱动行走、踢球、翻滚等动作
 - ⚽ **3v3 足球模式** — 基于角色的 AI（守门员、后卫、前锋），配套完整裁判系统
 - 🌐 **WebRTC 多人幽灵** — 通过 Trystero 实现 P2P 鸭子同步，15Hz 广播，无需服务器
 - 🎨 **赛博朋克 Tron 竞技场** — 自定义 GLSL 着色器、霓虹网格地板、CRT 后处理
@@ -38,7 +38,7 @@
 | UI 组件 | MUI (Material UI) |
 | 状态管理 | Zustand |
 | 物理引擎 | [@mujoco/mujoco](https://www.npmjs.com/package/@mujoco/mujoco)（WebAssembly） |
-| 模型推理 | [onnxruntime-web](https://www.npmjs.com/package/onnxruntime-web)（wasm-simd-threaded） |
+| 模型推理 | [onnxruntime-web](https://www.npmjs.com/package/onnxruntime-web)（wasm-simd，单线程执行） |
 | 多人联机 | [Trystero](https://github.com/dmotz/trystero)（WebRTC P2P，Nostr 中继信令） |
 | 测试 | node:test + 无头端到端探针 |
 | 部署 | Docker (nginx) / Cloudflare Pages / Hugging Face Spaces |
@@ -67,10 +67,11 @@ npm run dev
 
 | 模式 | URL |
 |------|-----|
-| 🏟️ 足球模式（3v3） | `http://localhost:5173/?mode=football&boot=1` |
-| 🦆 沙盒模式（单鸭） | `http://localhost:5173/?boot=1` |
+| 🏟️ 足球模式（3v3，默认） | `http://localhost:5173/` |
+| 🦆 沙盒模式（单鸭） | `http://localhost:5173/?mode=sandbox` |
+| 🔊 音频实验页 | `http://localhost:5173/?soundboard=1` |
 
-> **说明：** `?boot=1` 会跳过欢迎弹窗，直接展示实时 BIOS 加载控制台。加载失败（资产缺失、策略拉取出错等）会冻结在 `SYSTEM HALTED` 画面并显示错误详情，便于排查。
+> **说明：** 足球模式是默认入口——直接访问根路径 `/` 即可进入。追加 `&boot=1`（即 `?mode=sandbox&boot=1`）会跳过标题、直接展示实时 BIOS 加载控制台；该参数仅对沙盒模式生效，足球模式始终显示 "Kick Off" 标题门。加载失败（资产缺失、策略拉取出错等）会冻结在 `SYSTEM HALTED` 画面并显示错误详情，便于排查。
 
 ### Git LFS
 
@@ -100,10 +101,13 @@ app/src/
 │   ├── variants.js        # legs / rollers 运动形态切换
 │   ├── football/          # 足球领域逻辑
 │   │   ├── referee.js     # 规则引擎（进球、犯规、罚时、开球）
-│   │   ├── ai/            # 角色 AI（守门员、后卫、前锋）
+│   │   ├── ai/index.js    # 角色 AI（守门员、后卫、前锋）
 │   │   ├── field.js       # 球场与物理围栏
 │   │   ├── goal.js        # 球门网格与碰撞几何
-│   │   └── match-config.js # 队伍编成与比赛参数
+│   │   ├── match-config.js # 队伍编成与比赛参数
+│   │   ├── celebration.js # 进球庆祝编排
+│   │   ├── constants.js   # 足球专属调参常量
+│   │   └── duck-instance.js # 单只鸭子足球实例封装
 │   ├── controls/          # 输入控制器（键盘、手柄、触屏）
 │   └── fx/                # 视觉特效（粒子、镜头震动、CRT）
 ├── football/              # 足球模式 React 组件

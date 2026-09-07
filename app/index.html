@@ -4,15 +4,26 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Microduck Arena</title>
+    <meta name="description" content="3v3 reinforcement-learning football in your browser — MuJoCo WASM physics, ONNX neural policies, WebRTC P2P multiplayer. Zero backend." />
+    <meta property="og:title" content="Microduck Arena — 3v3 RL Football" />
+    <meta property="og:description" content="Browser-native 3v3 reinforcement-learning football. MuJoCo WASM at 50Hz, 9 ONNX neural policies, WebRTC P2P sync. Zero backend, fully open-source." />
+    <meta property="og:image" content="https://microduck-arena.com/assets/duck-head-mark-open.webp" />
+    <meta property="og:url" content="https://microduck-arena.com/" />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="icon" href="/assets/duck-head-mark.webp" />
     <!-- Anton: the landing's brutal print display voice (FancyTitle /
-         ComicButton on the pollen-website Microduck pages). -->
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Anton&display=swap"
-      rel="stylesheet"
-    />
+         ComicButton on the pollen-website Microduck pages). Self-hosted
+         (latin subset, OFL) — no Google Fonts CDN round-trips. -->
+    <link rel="preload" as="font" type="font/woff2" crossorigin href="/fonts/anton-latin.woff2" />
     <style>
+      @font-face {
+        font-family: 'Anton';
+        font-style: normal;
+        font-weight: 400;
+        font-display: swap;
+        src: url('/fonts/anton-latin.woff2') format('woff2');
+      }
       :root {
         --ink: #08080c;
       }
