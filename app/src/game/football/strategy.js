@@ -1,6 +1,12 @@
 // Coach Strategy Card (v2) — continuous 0..1 energy knobs → TUNE overlay.
 // Same JSON is the handshake payload for NL / blocks / PvP lobby.
 // Legacy discrete levels (push/low/…) are migrated on normalize.
+//
+// Layering (do not mix):
+//   Strategy card = tactics intent (formation / knobs) — rated as one axis
+//   Locomotion    = legs | rollers execution — rated as a sibling axis
+// Same strategy + different loco must keep identical decideAll intents;
+// only applyLocoLimits() remaps command speeds (see football/loco.js).
 
 import { SPAWN_POSITIONS, FIELD_HALF_L } from './constants.js';
 
@@ -265,9 +271,11 @@ export function knobsToOverlay(knobsIn) {
     CHASE_SPEED: lerp(0.2, 0.25, pr),
     DEF_CHASE_SPEED: lerp(0.2, 0.25, pr),
 
-    // Shoot greed
-    SHOOT_ANGLE: lerp(0.12, 0.58, sg),
-    SHOOT_DIST: lerp(0.28, 0.58, sg),
+    // Shoot greed — keep contact honest (no mid-range air kicks).
+    SHOOT_ANGLE: lerp(0.14, 0.36, sg),
+    SHOOT_DIST: lerp(0.30, 0.40, sg),
+    KICK_CONTACT: lerp(0.26, 0.34, sg),
+    AIM_SOFT_MULT: lerp(1.15, 1.45, sg),
 
     SUPPORT_LATERAL: lerp(0.3, 1.3, k.supportWidth),
     SUPPORT_AHEAD: lerp(0.1, 1.2, k.supportDepth),

@@ -29,7 +29,8 @@ function FootballGame() {
   useFrame((_, dt) => {
     gameApi.frame?.(Math.min(dt, 0.05));
   });
-  // After the main R3F pass: blit team FPV eye-cams into HUD canvases.
+  // After the main R3F pass: blit team FPV into HUD canvases. Must restore
+  // the full CSS viewport afterward or the *next* main pass paints black.
   useFrame((_, dt) => {
     gameApi.renderTeamFpv?.(Math.min(dt, 0.05));
   }, -1);
@@ -49,7 +50,7 @@ export default function FootballCanvas() {
     <Canvas
       style={{ position: "fixed", inset: 0, zIndex: 1 }}
       dpr={[1, 1.5]}
-      gl={{ antialias: true, alpha: true }}
+      gl={{ antialias: true, alpha: false }}
       // Overview framing of the 6 x 4 m pitch from centre; the game core
       // takes over the follow-cam once it boots.
       camera={{

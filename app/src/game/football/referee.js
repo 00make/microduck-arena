@@ -13,7 +13,7 @@
 // attacks +X; blue defends +X and attacks -X.
 
 import {
-  FIELD_HALF_L, FIELD_HALF_W, GOAL_HEIGHT, BALL_RADIUS,
+  FIELD_HALF_L, FIELD_HALF_W, GOAL_HEIGHT, GOAL_DEPTH, BALL_RADIUS,
   MATCH_DURATION_S, GOLDEN_GOAL_DURATION_S, PENALTY_DURATION_S,
   BALL_SPAWN, GOAL_LINES,
 } from './constants.js';
@@ -93,8 +93,71 @@ export function checkGoal(prev, cur) {
 }
 
 /**
+ * Ball already sitting past the goal plane inside the mouth (sweep missed —
+ * e.g. slow creep that first tripped the whole-ball OOB band, or prev was
+ * already behind the line). Used as a recovery after checkGoal.
+ *
+ * @param {number[]} pos
+ * @returns {?{team: 'red'|'blue', goal: 'red'|'blue'}}
+ */
+export function checkBallInGoal(pos) {
+  if (!pos || !Number.isFinite(pos[0])) return null;
+  const r = BALL_RADIUS;
+  const z = Number.isFinite(pos[2]) ? pos[2] : 0;
+  for (const owner of ['red', 'blue']) {
+    const { x: planeX, halfW } = GOAL_LINES[owner];
+    const side = Math.sign(planeX);
+    const past = side < 0 ? pos[0] <= planeX : pos[0] >= planeX;
+    if (!past) continue;
+    // Generous depth: cage back is ~halfL+depth, but a solver tunnel past
+    // the back panel must still count — only skip absurd escapes.
+    if (Math.abs(pos[0]) > FIELD_HALF_L + GOAL_DEPTH + 1.0) continue;
+    if (Math.abs(pos[1]) <= halfW + r && z < GOAL_HEIGHT) {
+      return { team: OPP[TEAM_OF_GOAL[owner]], goal: owner };
+    }
+  }
+  return null;
+}
+
+/** Samples along prev→cur for a point already inside the goal volume. */
+const GOAL_PATH_SAMPLES = 4;
+
+/**
+ * Full goal test: plane sweep, stranded-in-net recovery, and path samples.
+ * Path samples catch post-glance frames where the plane intersection drifts
+ * wide of the mouth while an intermediate point was already past the line
+ * inside the posts (would otherwise become a false goal-kick).
+ *
+ * @param {?number[]} prev
+ * @param {?number[]} cur
+ * @returns {?{team: 'red'|'blue', goal: 'red'|'blue'}}
+ */
+export function checkGoalPath(prev, cur) {
+  const direct = checkGoal(prev, cur) || checkBallInGoal(cur);
+  if (direct) return direct;
+  if (!prev || !cur) return null;
+  for (let i = 1; i <= GOAL_PATH_SAMPLES; i += 1) {
+    const t = i / (GOAL_PATH_SAMPLES + 1);
+    const p = [
+      prev[0] + t * (cur[0] - prev[0]),
+      prev[1] + t * (cur[1] - prev[1]),
+      prev[2] + t * (cur[2] - prev[2]),
+    ];
+    const hit = checkBallInGoal(p);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/**
  * Out-of-bounds test: the whole ball must be past the line (partially on
  * the line stays in play), per 01-rules.md.
+ *
+ * Goal-line caveat: the whole-ball threshold (|x|+r > halfL) fires at
+ * |x| > ~2.95, but the goal plane is at ±3.0. A slow roll into the mouth
+ * would otherwise become a goal-kick/corner before checkGoal can see a
+ * plane crossing. Balls inside the mouth/cage corridor are left to
+ * checkGoalPath instead.
  *
  * @param {number[]} pos - Ball pos [x, y, z].
  * @returns {?{kind: 'sideline'|'goalline', side: number, pos: number[]}}
@@ -106,6 +169,16 @@ export function checkOutOfBounds(pos) {
     return { kind: 'sideline', side: Math.sign(pos[1]), pos };
   }
   if (Math.abs(pos[0]) + r > FIELD_HALF_L) {
+    const owner = pos[0] < 0 ? 'red' : 'blue';
+    const { halfW } = GOAL_LINES[owner];
+    const z = Number.isFinite(pos[2]) ? pos[2] : 0;
+    // Slight z slack so a ball that grazes the bar height is not whistled
+    // out before it settles under the crossbar inside the net.
+    const inMouth = Math.abs(pos[1]) <= halfW + r && z < GOAL_HEIGHT + r;
+    const inCage = Math.abs(pos[0]) <= FIELD_HALF_L + GOAL_DEPTH + r * 2;
+    if (inMouth && inCage) return null;
+    // Past the plane in the mouth (any depth short of absurd) → goal path.
+    if (checkBallInGoal(pos)) return null;
     return { kind: 'goalline', side: Math.sign(pos[0]), pos };
   }
   return null;
@@ -189,7 +262,7 @@ export function decide(prevBallPos, gameState) {
   const ballPos = gameState && gameState.ball ? gameState.ball.pos : null;
   return {
     touches: detectTouches(ballPos, gameState ? gameState.ducks : null),
-    goal: checkGoal(prevBallPos, ballPos),
+    goal: checkGoalPath(prevBallPos, ballPos),
     outOfBounds: checkOutOfBounds(ballPos),
   };
 }
@@ -432,9 +505,9 @@ export function createReferee({ onEvent } = {}) {
       && (touchesSinceSetPiece >= 2 || setPieceType !== 'kickoff')) {
       setPieceActive = false;
     }
-    // Goal (swept) takes priority over out-of-bounds: a ball in the mouth
-    // is also "past the goal line" but must count as a goal.
-    const goal = checkGoal(prevBallPos, ballPos);
+    // Goal (swept / path / stranded) takes priority over out-of-bounds: a
+    // ball in the mouth is also "past the goal line" but must count as a goal.
+    const goal = checkGoalPath(prevBallPos, ballPos);
     if (goal) {
       onGoal(goal);
       return;

@@ -53,6 +53,62 @@ function patchTeam(team) {
   return team;
 }
 
+function LocoPicker({ compact }) {
+  const locale = useGame((s) => s.locale) || "en";
+  const userTeam = useGame((s) => s.userTeam) || "red";
+  const locoByTeam = useGame((s) => s.locoByTeam) || { red: "legs", blue: "legs" };
+  const rollersLoading = useGame((s) => s.rollersLoading);
+  const locoSwitching = useGame((s) => s.locoSwitching);
+  const busy = rollersLoading || locoSwitching;
+  const rival = userTeam === "red" ? "blue" : "red";
+  const myLoco = locoByTeam[userTeam] === "rollers" ? "rollers" : "legs";
+  const rivalLoco = locoByTeam[rival] === "rollers" ? "rollers" : "legs";
+  const labels = {
+    legs: t(locale, "locoLegs"),
+    rollers: busy ? t(locale, "locoLoading") : t(locale, "locoRollers"),
+  };
+  return (
+    <Box
+      sx={{
+        display: "flex",
+        flexDirection: "column",
+        gap: "0.45rem",
+        pb: compact ? "0.45rem" : "0.55rem",
+        mb: compact ? "0.15rem" : "0.25rem",
+        borderBottom: "1px solid rgba(255,255,255,0.1)",
+      }}
+    >
+      <ChipGroup
+        label={`${t(locale, "locoMode")} · ${teamLabel(locale, userTeam)}`}
+        options={["legs", "rollers"]}
+        labels={labels}
+        value={myLoco}
+        onChange={(name) => gameApi.setTeamLoco?.(userTeam, name)}
+        disabled={busy}
+      />
+      <ChipGroup
+        label={`${t(locale, "locoRival")} · ${teamLabel(locale, rival)}`}
+        options={["legs", "rollers"]}
+        labels={labels}
+        value={rivalLoco}
+        onChange={(name) => gameApi.setTeamLoco?.(rival, name)}
+        disabled={busy}
+      />
+      <Typography
+        sx={{
+          fontFamily: MONO,
+          fontSize: compact ? "0.48rem" : "0.52rem",
+          color: "rgba(255,255,255,0.4)",
+          letterSpacing: "0.04em",
+          lineHeight: 1.35,
+        }}
+      >
+        {t(locale, "locoSplitHint")}
+      </Typography>
+    </Box>
+  );
+}
+
 function ChipGroup({ label, options, labels, value, onChange, disabled }) {
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: "0.3rem", alignItems: "stretch" }}>
@@ -309,6 +365,21 @@ export default function StrategyPanel({ compact = false, formationLocked = false
         onChange={patchTeam}
         disabled={formationLocked}
       />
+
+      <LocoPicker compact={compact} />
+
+      <Typography
+        sx={{
+          fontFamily: MONO,
+          fontSize: "0.58rem",
+          fontWeight: 600,
+          letterSpacing: "0.14em",
+          textTransform: "uppercase",
+          color: "rgba(255,255,255,0.45)",
+        }}
+      >
+        {t(locale, "tacticsSection")}
+      </Typography>
 
       <ChipGroup
         label={t(locale, "editingSide")}

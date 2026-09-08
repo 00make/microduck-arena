@@ -4,7 +4,7 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  createReferee, decide, checkGoal, checkOutOfBounds, decideSetPiece, detectTouches, REFEREE,
+  createReferee, decide, checkGoal, checkGoalPath, checkOutOfBounds, decideSetPiece, detectTouches, REFEREE,
 } from '../src/game/football/referee.js';
 import { PENALTY_DURATION_S } from '../src/game/football/constants.js';
 
@@ -108,6 +108,43 @@ describe('createReferee', () => {
     assert.equal(last('goal').payload.team, 'red');
   });
 
+  it('slow roll into the mouth scores (OOB must not steal the goal)', () => {
+    // Whole-ball OOB trips at |x|>~2.95; goal plane is at 3.0. A soft finish
+    // that creeps 2.90 → 2.97 → 3.02 must still count as a goal.
+    toOpenPlay(ref, 'red');
+    ref.step(DT, makeGameState([2.90, 0.05, 0.05], [duck('r0', 'red', [2.7, 0, 0])]));
+    ref.step(DT, makeGameState([2.97, 0.05, 0.05], [duck('r0', 'red', [2.7, 0, 0])]));
+    assert.equal(ref.getState(), 'PLAYING', 'mouth corridor is not a set-piece yet');
+    ref.step(DT, makeGameState([3.02, 0.05, 0.05], [duck('r0', 'red', [2.7, 0, 0])]));
+    assert.deepEqual(ref.getScore(), { red: 1, blue: 0 });
+    assert.equal(ref.getState(), 'GOAL');
+  });
+
+  it('ball already stranded past the plane inside the mouth still scores', () => {
+    toOpenPlay(ref, 'red');
+    // Both frames past the plane (missed sweep) — recovery path.
+    ref.step(DT, makeGameState([3.05, 0.1, 0.05], [duck('r0', 'red', [2.8, 0, 0])]));
+    assert.deepEqual(ref.getScore(), { red: 1, blue: 0 });
+    assert.equal(last('goal').payload.team, 'red');
+  });
+
+  it('post-glance path still scores when plane y drifts wide', () => {
+    // Plane intersection is wide of the mouth, but a deeper sample has
+    // come back inside the posts — must not become a goal-kick.
+    toOpenPlay(ref, 'blue');
+    ref.step(DT, makeGameState([-2.90, 0.90, 0.05], [duck('b0', 'blue', [-2.7, 0.5, 0])]));
+    ref.step(DT, makeGameState([-3.10, 0.50, 0.05], [duck('b0', 'blue', [-2.7, 0.5, 0])]));
+    assert.deepEqual(ref.getScore(), { red: 0, blue: 1 });
+    assert.equal(ref.getState(), 'GOAL');
+  });
+
+  it('deep tunnel past the net back panel still scores in the mouth', () => {
+    toOpenPlay(ref, 'red');
+    ref.step(DT, makeGameState([2.9, 0, 0.05], [duck('r0', 'red', [2.7, 0, 0])]));
+    ref.step(DT, makeGameState([3.45, 0.05, 0.05], [duck('r0', 'red', [2.7, 0, 0])]));
+    assert.deepEqual(ref.getScore(), { red: 1, blue: 0 });
+  });
+
   it('GOAL → KICKOFF after the reset hold, conceding team restarts', () => {
     toOpenPlay(ref, 'blue');
     ref.step(DT, makeGameState([-2.9, 0, 0.05]));
@@ -209,11 +246,12 @@ describe('createReferee', () => {
 
   it('ball over the goal line, attacker touched last → goal_kick', () => {
     toPlaying(ref);
-    // Red attacks +X; red touches last and the ball exits over the blue line.
-    const gs = (pos) => makeGameState(pos, [duck('r1', 'red', [pos[0] - 0.2, 0, 0])]);
-    ref.step(DT, gs([2.9, 0, 0.05]));
-    ref.step(DT, gs([2.96, 0, 0.05]));
-    run(ref, Math.ceil(REFEREE.DEAD_BALL_S / DT) + 1, gs([2.95, 0, 0.05]));
+    // Red attacks +X; red touches last and the ball exits WIDE of the blue
+    // mouth (inside the mouth would be a goal, not a goal-kick).
+    const gs = (pos) => makeGameState(pos, [duck('r1', 'red', [pos[0] - 0.2, pos[1], 0])]);
+    ref.step(DT, gs([2.9, 1.2, 0.05]));
+    ref.step(DT, gs([2.96, 1.2, 0.05]));
+    run(ref, Math.ceil(REFEREE.DEAD_BALL_S / DT) + 1, gs([2.95, 1.2, 0.05]));
     const piece = ref.getSetPiece();
     assert.equal(piece.type, 'goal_kick');
     assert.equal(piece.team, 'blue'); // defending team restarts
@@ -222,11 +260,11 @@ describe('createReferee', () => {
 
   it('ball over the goal line, defender touched last → corner', () => {
     toPlaying(ref);
-    // Blue defends +X; blue touches last and the ball exits over its own line.
+    // Blue defends +X; blue touches last and the ball exits wide of its mouth.
     const gs = (pos) => makeGameState(pos, [duck('b1', 'blue', [pos[0] - 0.2, pos[1] - 0.1, 0])]);
-    ref.step(DT, gs([2.9, 0.9, 0.05]));
-    ref.step(DT, gs([2.96, 0.9, 0.05]));
-    run(ref, Math.ceil(REFEREE.DEAD_BALL_S / DT) + 1, gs([2.95, 0.9, 0.05]));
+    ref.step(DT, gs([2.9, 1.2, 0.05]));
+    ref.step(DT, gs([2.96, 1.2, 0.05]));
+    run(ref, Math.ceil(REFEREE.DEAD_BALL_S / DT) + 1, gs([2.95, 1.2, 0.05]));
     const piece = ref.getSetPiece();
     assert.equal(piece.type, 'corner_blue'); // corner at the blue end, red takes it
     assert.equal(piece.team, 'red');
@@ -507,7 +545,8 @@ describe('pure decision helpers', () => {
     assert.deepEqual(gs, frozen);
     assert.equal(a.goal.team, 'blue');
     assert.deepEqual(a.touches, [{ id: 'r1', team: 'red' }]);
-    assert.equal(a.outOfBounds.kind, 'goalline');
+    // Mouth/cage is reserved for the goal path — not a goalline set-piece.
+    assert.equal(a.outOfBounds, null);
   });
 
   it('checkGoal: mouth crossing yes, wide/over the bar no', () => {
@@ -517,10 +556,21 @@ describe('pure decision helpers', () => {
     assert.equal(checkGoal(null, [3.2, 0, 0.05]), null);
   });
 
+  it('checkGoalPath recovers inward drift after a wide plane graze', () => {
+    assert.equal(checkGoal([2.9, 0.9, 0.05], [3.1, 0.5, 0.05]), null);
+    assert.deepEqual(
+      checkGoalPath([2.9, 0.9, 0.05], [3.1, 0.5, 0.05]),
+      { team: 'red', goal: 'blue' },
+    );
+  });
+
   it('checkOutOfBounds: whole-ball rule on both axes', () => {
     assert.equal(checkOutOfBounds([0, 1.94, 0.05]), null); // 1.99 < 2.0
     assert.equal(checkOutOfBounds([0, 1.96, 0.05]).kind, 'sideline');
-    assert.equal(checkOutOfBounds([2.96, 0, 0.05]).kind, 'goalline');
+    // Wide of the posts past the goal line → goalline OOB.
+    assert.equal(checkOutOfBounds([2.96, 1.5, 0.05]).kind, 'goalline');
+    // Inside the mouth corridor (|y| small) is reserved for goal detection.
+    assert.equal(checkOutOfBounds([2.96, 0, 0.05]), null);
     assert.equal(checkOutOfBounds([0, 0, 0.05]), null);
   });
 

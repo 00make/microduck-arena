@@ -18,11 +18,16 @@ export const BASE_TUNE = {
   WZ_MAX: 1.0,
   TURN_GAIN: 2.2,
 
-  // Shooting
-  SHOOT_DIST: 0.35,
-  SHOOT_ANGLE: 0.26,        // ~15° alignment window
+  // Shooting — engage band vs hard contact (kick only when truly at the ball).
+  SHOOT_DIST: 0.36,        // enter AIM / "at feet" band
+  KICK_CONTACT: 0.30,      // hard max duck↔ball for kick=true
+  SHOOT_ANGLE: 0.22,        // ~12.5° alignment window
   SHOOT_SPEED: 0.25,     // raised above walk-policy dead-zone (~0.2 m/s)
   AIM_SPEED: 0.22,        // raised above walk-policy dead-zone (~0.2 m/s)
+  AIM_SOFT_MULT: 1.35,     // soft align widens SHOOT_ANGLE by this (was 1.85)
+  // Field awareness: kick impulse follows body yaw — never boot toward own net.
+  KICK_UPFIELD_COS: 0.30,  // min cos(yaw)·attackDir to allow a kick
+  CLEAR_UPFIELD_COS: 0.55, // stricter in own half (clear, don't "shoot" home)
 
   // Chase approach (Booster approach_target): stand at ball − shotDir × offset.
   // Slow ball → static offset; fast ball → short ball+v·t.
@@ -30,8 +35,9 @@ export const BASE_TUNE = {
   BALL_PREDICT_T: 0.7,         // max prediction horizon (s)
   APPROACH_ARRIVE_EPS: 0.18,   // slightly loose so we commit into the ball
   APPROACH_OFFSET: 0.32,       // tighter stand-behind (less orbit distance)
-  KICK_COOLDOWN_TICKS: 15,     // ticks a stuck chaser stops kicking & repositions (1.5s @10Hz)
-  KICK_HOLD_BEFORE_COOLDOWN: 2,// consecutive at-feet kick attempts before arming the cooldown
+  KICK_COOLDOWN_TICKS: 12,     // ticks a stuck chaser stops kicking & repositions (~1.2s)
+  KICK_HOLD_BEFORE_COOLDOWN: 3,// consecutive at-feet kick attempts before arming the cooldown
+  POST_KICK_CLAIM_TICKS: 22,   // keep chase claim after a kick so we don't walk off
   AIM_CREEP: 0.22,             // while AIM: keep walking into the ball (no freeze-stare)
   AIM_SOFT_TICKS: 8,           // after this many AIM ticks, widen align window
   ORBIT_COMMIT_TICKS: 14,      // stop pure orbit; cut toward approach even if path skims
@@ -78,6 +84,22 @@ export const BASE_TUNE = {
   AVOID_STRENGTH: 0.40,       // max push (m) when coincident with a blocker
   // Non-chasers must stay outside this ring so only one duck owns the ball.
   BALL_KEEP_OUT: 0.85,
+
+  // Face-off retreat: opponent fills most of frontal FOV for ~3s → reverse out.
+  // Geometric proxy for "vision" (no camera pixels): angular size / FOV.
+  BLOCK_FOV: 1.36,              // ~78° horizontal (matches FPV)
+  BLOCK_FILL: 0.67,             // >2/3 of the view
+  BLOCK_HALF_W: 0.14,           // opponent half-width for angular size (m)
+  BLOCK_HOLD_TICKS: 30,         // 3.0s @ 10Hz AI
+  BLOCK_RETREAT_TICKS: 12,      // ~1.2s reverse peel
+  BLOCK_BACK_SPEED: -0.2,       // body reverse (VX_MIN)
+
+  // Ball find / reacquire: chaser treats FOV like a camera.
+  // If the ball leaves the frontal cone for BALL_LOST_TICKS → scan burst.
+  BALL_FOV: 1.36,               // same ~78° cone as FPV / block
+  BALL_LOST_TICKS: 20,          // 2.0s @ 10Hz without ball in view
+  BALL_SCAN_TICKS: 14,          // ~1.4s spin+creep reacquire
+  BALL_SCAN_SPEED: 0.12,        // slow forward while scanning
 
   // Goalkeeper
   GK_LINE_OFFSET: 0.1,
@@ -238,7 +260,11 @@ export function chaseCost(duck, ball, prevChaserId = -1, attackDir = 1) {
     cost += TUNE.CLAIM_WRONG_SIDE_PENALTY;
   }
 
-  if (duck.id === prevChaserId) cost -= TUNE.CHASE_HYSTERESIS;
+  if (duck.id === prevChaserId) {
+    cost -= TUNE.CHASE_HYSTERESIS;
+    // Just kicked — stay on the ball instead of yielding and walking to support.
+    if ((duck._ai?.postKickClaim | 0) > 0) cost -= 0.45;
+  }
   return cost;
 }
 
@@ -249,6 +275,8 @@ export function chaseCost(duck, ball, prevChaserId = -1, attackDir = 1) {
 function chaserClaimExpired(duck, ball, attackDir) {
   if (!duck?._ai) return false;
   const ai = duck._ai;
+  // Post-kick: never drop claim mid-follow-through.
+  if ((ai.postKickClaim | 0) > 0) return false;
   const [x, y] = duckXY(duck);
   const targetGoalX = attackDir * FIELD_HALF_L;
   const behind = isBehindBall(x, y, ball, targetGoalX);
@@ -651,6 +679,42 @@ export function isBehindBall(sx, sy, ball, targetGoalX) {
 }
 
 /**
+ * Pitch / goal awareness: kick impulse follows body yaw.
+ * Refuse boots whose forward axis points back toward our own goal.
+ *
+ * @param {number} yaw
+ * @param {number} attackDir +1 red / −1 blue
+ * @param {{x:number,y?:number}} ball
+ * @param {number} defendGoalX
+ * @param {number} [minCos] override upfield cosine gate
+ */
+export function isKickSafe(yaw, attackDir, ball, defendGoalX, minCos) {
+  const ownHalf = ball.x * attackDir < 0;
+  const need = minCos != null
+    ? minCos
+    : (ownHalf ? TUNE.CLEAR_UPFIELD_COS : TUNE.KICK_UPFIELD_COS);
+  // Body +X is cos(yaw). Red attacks +X → need cos>0; blue attacks −X → cos<0.
+  if (Math.cos(yaw) * attackDir < need) return false;
+  // Prefer opponent goal over own goal bearing (blocks diagonal own-goal boots).
+  const by = ball.y || 0;
+  const toOwn = angleTo(ball.x, by, defendGoalX, 0);
+  const toOpp = angleTo(ball.x, by, -defendGoalX, 0);
+  if (Math.abs(angleDiff(yaw, toOwn)) + 0.12 < Math.abs(angleDiff(yaw, toOpp))) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Desired kick facing: full shot in attack half; clear straight upfield in own half.
+ */
+function kickAimYaw(ball, attackDir, targetGoalX) {
+  const ownHalf = ball.x * attackDir < 0;
+  if (ownHalf) return attackDir > 0 ? 0 : Math.PI;
+  return angleTo(ball.x, ball.y || 0, targetGoalX, 0);
+}
+
+/**
  * Chaser: CHASE → ARRIVE (behind ball) → AIM / SHOOT.
  *
  * Geometry that matters (not "look at the ball"):
@@ -661,16 +725,18 @@ export function isBehindBall(sx, sy, ball, targetGoalX) {
 function chaserDecide(duck, ctx) {
   const [sx, sy] = duckXY(duck);
   const yaw = duck.yaw || 0;
-  const { ball, targetGoalX } = ctx;
+  const { ball, targetGoalX, defendGoalX, attackDir } = ctx;
   const bd = distToBall(duck, ball);
   const toBall = angleToBall(duck, ball);
-  const shotDir = angleTo(ball.x, ball.y, targetGoalX, 0);
+  // Own half → clear straight upfield; attack half → aim opponent goal mouth.
+  const shotDir = kickAimYaw(ball, attackDir, targetGoalX);
   const ap = chaseApproachPoint(ball, targetGoalX, sx, sy);
   const apDist = distanceTo(sx, sy, ap.x, ap.y);
   const arrived = apDist <= TUNE.APPROACH_ARRIVE_EPS;
   const behind = isBehindBall(sx, sy, ball, targetGoalX);
   const ballAhead = Math.cos(angleDiff(yaw, toBall)) > 0.12;
   const alignErr = Math.abs(angleDiff(yaw, shotDir));
+  const ownHalf = ball.x * attackDir < 0;
 
   if (!duck._ai) {
     duck._ai = {
@@ -685,8 +751,10 @@ function chaserDecide(duck, ctx) {
   if (ai.atFeetTicks === undefined) ai.atFeetTicks = 0;
   if (ai.pokeArmed === undefined) ai.pokeArmed = false;
   if (ai.orbitTicks === undefined) ai.orbitTicks = 0;
+  if (ai.postKickClaim === undefined) ai.postKickClaim = 0;
 
   if (ai.kickCooldown > 0) ai.kickCooldown--;
+  if (ai.postKickClaim > 0) ai.postKickClaim--;
 
   if (bd <= TUNE.SHOOT_DIST) ai.atFeetTicks++;
   else {
@@ -753,22 +821,41 @@ function chaserDecide(duck, ctx) {
         turnToward(yaw, toSlide),
       );
     }
-    const soft = stuckAtFeet || ai.aimTicks >= TUNE.AIM_SOFT_TICKS;
-    const alignLim = soft ? TUNE.SHOOT_ANGLE * 1.85 : TUNE.SHOOT_ANGLE;
+    const soft = !ownHalf && (stuckAtFeet || ai.aimTicks >= TUNE.AIM_SOFT_TICKS);
+    const softMult = TUNE.AIM_SOFT_MULT || 1.35;
+    // Own half: no soft widen — clears must actually face upfield.
+    const alignLim = soft ? TUNE.SHOOT_ANGLE * softMult : TUNE.SHOOT_ANGLE;
     const aligned = alignErr <= alignLim;
-    if (aligned && ballAhead) {
+    const kickSafe = isKickSafe(yaw, attackDir, ball, defendGoalX);
+    // Kick only at true contact range — SHOOT_DIST is for AIM/creep, not air boots.
+    const inContact = bd <= TUNE.KICK_CONTACT + 1e-4;
+    if (aligned && ballAhead && inContact && kickSafe) {
       ai.aimTicks = 0;
       if (ai.kickCooldown > 0) {
         ai.kickHoldTicks = 0;
-        const lateralWz = (sy > ball.y) ? -TUNE.WZ_MAX * 0.5 : TUNE.WZ_MAX * 0.5;
-        return limitCommand(TUNE.AIM_CREEP * 0.6, lateralWz, false);
+        // Stay on the ball during cooldown — creep in, don't wander off.
+        return limitCommand(
+          creepToward(yaw, toBall, TUNE.AIM_CREEP * 0.7),
+          turnToward(yaw, shotDir),
+          false,
+        );
       }
       ai.kickHoldTicks++;
       if (ai.kickHoldTicks >= TUNE.KICK_HOLD_BEFORE_COOLDOWN) {
         ai.kickHoldTicks = 0;
         ai.kickCooldown = TUNE.KICK_COOLDOWN_TICKS;
       }
+      ai.postKickClaim = TUNE.POST_KICK_CLAIM_TICKS;
       return limitCommand(TUNE.SHOOT_SPEED, turnToward(yaw, shotDir), true);
+    }
+    // Close enough / aligned but kick not safe yet — walk in or turn upfield, never poke.
+    if (aligned && ballAhead && !inContact) {
+      ai.kickHoldTicks = 0;
+      return limitCommand(
+        moveToward(yaw, toBall, TUNE.CHASE_SPEED),
+        turnToward(yaw, shotDir),
+        false,
+      );
     }
     // AIM — creep along shotDir while turning; scale down when badly misaligned.
     ai.kickHoldTicks = 0;
@@ -783,8 +870,10 @@ function chaserDecide(duck, ctx) {
       );
     }
     const alignFactor = clamp(1 - alignErr / (Math.PI * 0.55), 0.35, 1);
+    // In own half while unsafe: turn harder, creep less (don't shove into own net).
+    const creep = (!kickSafe && ownHalf) ? TUNE.AIM_CREEP * 0.35 : TUNE.AIM_CREEP * alignFactor;
     return limitCommand(
-      creepToward(yaw, shotDir, TUNE.AIM_CREEP * alignFactor),
+      creepToward(yaw, shotDir, creep),
       turnToward(yaw, shotDir),
       false,
     );
@@ -919,11 +1008,12 @@ function defenderFormation(duck, ctx, sx, sy, yaw, ball, attackDir, defendGoalX,
   }
 
   // CLEAR only if somehow at feet (should be rare for non-chaser) — still require behind.
-  if (bd <= TUNE.DEF_CLEAR_DIST && ballInOwnHalf) {
-    const shotDir = angleTo(ball.x, ball.y, targetGoalX, 0);
+  if (bd <= Math.min(TUNE.DEF_CLEAR_DIST, TUNE.KICK_CONTACT) + 1e-4 && ballInOwnHalf) {
+    const clearDir = attackDir > 0 ? 0 : Math.PI;
     if (isBehindBall(sx, sy, ball, targetGoalX)
-      && Math.abs(angleDiff(yaw, shotDir)) <= TUNE.SHOOT_ANGLE * 1.4) {
-      return limitCommand(TUNE.DEF_CHASE_SPEED * 0.8, turnToward(yaw, shotDir, TUNE.DEF_TURN_GAIN), true);
+      && Math.abs(angleDiff(yaw, clearDir)) <= TUNE.SHOOT_ANGLE * 1.2
+      && isKickSafe(yaw, attackDir, ball, defendGoalX)) {
+      return limitCommand(TUNE.DEF_CHASE_SPEED * 0.8, turnToward(yaw, clearDir, TUNE.DEF_TURN_GAIN), true);
     }
     const ap = chaseApproachPoint(ball, targetGoalX, sx, sy);
     const wp = pathSkimsBall(sx, sy, ap.x, ap.y, ball)
@@ -932,7 +1022,7 @@ function defenderFormation(duck, ctx, sx, sy, yaw, ball, attackDir, defendGoalX,
     const toWp = angleTo(sx, sy, wp.x, wp.y);
     return limitCommand(
       moveToward(yaw, toWp, TUNE.DEF_CHASE_SPEED),
-      turnToward(yaw, toWp, TUNE.DEF_TURN_GAIN),
+      turnToward(yaw, clearDir, TUNE.DEF_TURN_GAIN),
       false,
     );
   }
@@ -985,8 +1075,172 @@ function defenderFormation(duck, ctx, sx, sy, yaw, ball, attackDir, defendGoalX,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Anti-stuck
+// Vision proxies + anti-stuck (FOV ball find / face-off retreat)
 // ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * True when the ball lies in the frontal FOV cone (geometric "camera").
+ */
+export function ballInFov(sx, sy, yaw, ball, fov = TUNE.BALL_FOV) {
+  const by = ball.y || 0;
+  const bearing = angleTo(sx, sy, ball.x, by);
+  const err = Math.abs(angleDiff(yaw, bearing));
+  if (err > fov * 0.5) return false;
+  return Math.cos(angleDiff(yaw, bearing)) > 0.05;
+}
+
+/**
+ * Fraction of frontal FOV filled by an opponent (0..1+).
+ * Proxy for "对方鸭子占画面超过 2/3" without reading pixels.
+ */
+export function opponentFovFill(sx, sy, yaw, opp) {
+  const [ox, oy] = duckXY(opp);
+  const dist = distanceTo(sx, sy, ox, oy);
+  if (dist < 1e-3) return 1;
+  const bearing = angleTo(sx, sy, ox, oy);
+  const err = Math.abs(angleDiff(yaw, bearing));
+  const halfFov = TUNE.BLOCK_FOV * 0.5;
+  if (err > halfFov) return 0;
+  // Must be in front — behind-the-back blockers don't count as "in view".
+  if (Math.cos(angleDiff(yaw, bearing)) <= 0.05) return 0;
+  const ang = 2 * Math.atan(TUNE.BLOCK_HALF_W / dist);
+  const center = Math.max(0, 1 - err / halfFov);
+  return (ang / TUNE.BLOCK_FOV) * (0.55 + 0.45 * center);
+}
+
+/**
+ * Closest opponent that currently fills the most FOV (or null).
+ */
+function heaviestFovBlocker(duck, ctx) {
+  const [sx, sy] = duckXY(duck);
+  const yaw = duck.yaw || 0;
+  const opps = getOpponents(duck, ctx.allDucks || ctx.ducks || [], ctx.team);
+  let best = null;
+  let bestFill = 0;
+  for (const o of opps) {
+    if (o.fallen || o.penalized || o.sentOff) continue;
+    const fill = opponentFovFill(sx, sy, yaw, o);
+    if (fill > bestFill) {
+      bestFill = fill;
+      best = o;
+    }
+  }
+  return best ? { opp: best, fill: bestFill } : null;
+}
+
+/**
+ * Chaser lost-ball search: if the ball leaves FOV for BALL_LOST_TICKS,
+ * spin+creep to reacquire instead of walking with our back to the play.
+ */
+function maybeBallSearch(duck, ctx) {
+  if (duck.role === 'goalkeeper') return null;
+  if (duck.id !== ctx.chaserId) return null;
+  const [sx, sy] = duckXY(duck);
+  const yaw = duck.yaw || 0;
+  if (!duck._ai) {
+    duck._ai = {
+      aimTicks: 0, stallTicks: 0, escapeTicks: 0, prevX: sx, prevY: sy,
+      ballLostTicks: 0, scanTicks: 0, scanDir: 1,
+    };
+  }
+  const ai = duck._ai;
+  if (ai.ballLostTicks === undefined) ai.ballLostTicks = 0;
+  if (ai.scanTicks === undefined) ai.scanTicks = 0;
+  if (ai.scanDir === undefined) ai.scanDir = 1;
+
+  const seen = ballInFov(sx, sy, yaw, ctx.ball);
+  if (seen) {
+    ai.ballLostTicks = 0;
+    // Finish an in-progress scan early once the ball is back in view.
+    if (ai.scanTicks > 0) ai.scanTicks = 0;
+    return null;
+  }
+
+  ai.ballLostTicks++;
+  const toBall = angleToBall(duck, ctx.ball);
+
+  // Active scan burst: sweep while creeping so we reacquire then chase.
+  if (ai.scanTicks > 0) {
+    ai.scanTicks--;
+    const spin = ai.scanDir * TUNE.WZ_MAX;
+    const toward = turnToward(yaw, toBall);
+    // Mostly spin; keep a bias toward the true ball bearing.
+    const wz = clamp(0.7 * spin + 0.3 * toward, -TUNE.WZ_MAX, TUNE.WZ_MAX);
+    return limitCommand(TUNE.BALL_SCAN_SPEED, wz, false);
+  }
+
+  if (ai.ballLostTicks < TUNE.BALL_LOST_TICKS) {
+    // Soft reacquire: if we've been blind briefly, prefer facing the ball
+    // over whatever the role policy wanted — handled by returning null and
+    // letting chase turn; only hard-scan after the full lost window.
+    return null;
+  }
+
+  // Trigger a scan sweep.
+  ai.ballLostTicks = 0;
+  ai.scanTicks = TUNE.BALL_SCAN_TICKS;
+  ai.scanDir = ai.scanDir < 0 ? 1 : -1;
+  return limitCommand(TUNE.BALL_SCAN_SPEED, ai.scanDir * TUNE.WZ_MAX, false);
+}
+
+/**
+ * If an opponent paints >2/3 of the FOV for BLOCK_HOLD_TICKS, reverse out.
+ * Skips when the ball is in view and nearer than the blocker (not a true face-off).
+ */
+function maybeFaceOffRetreat(duck, ctx) {
+  if (duck.role === 'goalkeeper') return null;
+  const [sx, sy] = duckXY(duck);
+  const yaw = duck.yaw || 0;
+  if (!duck._ai) {
+    duck._ai = {
+      aimTicks: 0, stallTicks: 0, escapeTicks: 0, prevX: sx, prevY: sy,
+      blockTicks: 0, retreatTicks: 0,
+    };
+  }
+  const ai = duck._ai;
+  if (ai.blockTicks === undefined) ai.blockTicks = 0;
+  if (ai.retreatTicks === undefined) ai.retreatTicks = 0;
+
+  const hit = heaviestFovBlocker(duck, ctx);
+  let blocked = !!(hit && hit.fill >= TUNE.BLOCK_FILL);
+  // Ball is the focus and closer than the opponent → clutter, not a crash.
+  if (blocked && hit) {
+    const bd = distToBall(duck, ctx.ball);
+    const [ox, oy] = duckXY(hit.opp);
+    const od = distanceTo(sx, sy, ox, oy);
+    if (ballInFov(sx, sy, yaw, ctx.ball) && bd < od * 0.9) blocked = false;
+  }
+
+  // Already peeling — keep reversing with a side turn to break the axis.
+  if (ai.retreatTicks > 0) {
+    ai.retreatTicks--;
+    if (!blocked) ai.blockTicks = 0;
+    const opp = hit?.opp;
+    let wz = 0;
+    if (opp) {
+      const [ox, oy] = duckXY(opp);
+      const toOpp = angleTo(sx, sy, ox, oy);
+      const side = Math.sign(angleDiff(yaw, toOpp)) || (sy >= oy ? 1 : -1);
+      wz = side * TUNE.WZ_MAX * 0.7;
+    } else {
+      wz = (sy >= 0 ? 1 : -1) * TUNE.WZ_MAX * 0.5;
+    }
+    return limitCommand(TUNE.BLOCK_BACK_SPEED, wz, false);
+  }
+
+  if (blocked) ai.blockTicks++;
+  else ai.blockTicks = 0;
+
+  if (ai.blockTicks < TUNE.BLOCK_HOLD_TICKS) return null;
+
+  ai.blockTicks = 0;
+  ai.retreatTicks = TUNE.BLOCK_RETREAT_TICKS;
+  const opp = hit.opp;
+  const [ox, oy] = duckXY(opp);
+  const toOpp = angleTo(sx, sy, ox, oy);
+  const side = Math.sign(angleDiff(yaw, toOpp)) || (sy >= oy ? 1 : -1);
+  return limitCommand(TUNE.BLOCK_BACK_SPEED, side * TUNE.WZ_MAX * 0.7, false);
+}
 
 /** Raise sub-threshold vx to MIN_EFFECTIVE_VX to prevent stalling. */
 function applyAntiStuck(cmd) {
@@ -994,6 +1248,15 @@ function applyAntiStuck(cmd) {
   if (vx > 0 && vx < TUNE.MIN_EFFECTIVE_VX) vx = TUNE.MIN_EFFECTIVE_VX;
   if (vx < 0 && vx > -TUNE.MIN_EFFECTIVE_VX) vx = -TUNE.MIN_EFFECTIVE_VX;
   return { vx, wz, kick };
+}
+
+/** Last-line own-goal fuse: strip kick if body yaw aims home. */
+function applyKickSafety(cmd, duck, ctx) {
+  if (!cmd.kick || duck.role === 'goalkeeper') return cmd;
+  const yaw = duck.yaw || 0;
+  if (isKickSafe(yaw, ctx.attackDir, ctx.ball, ctx.defendGoalX)) return cmd;
+  const aim = kickAimYaw(ctx.ball, ctx.attackDir, ctx.targetGoalX);
+  return limitCommand(cmd.vx, turnToward(yaw, aim), false);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1017,10 +1280,17 @@ export function decideAll(ducks, gs) {
     const ctx = buildCtx(ducks, gs);
     return ducks.map(d => {
       if (d.fallen || d.penalized) return { vx: 0, wz: 0, kick: false };
-      if (d.role === 'goalkeeper') return gkDecide(d, ctx);
-      if (d.id === ctx.chaserId) return chaserDecide(d, ctx);
-      return formationDecide(d, ctx);
-    }).map(cmd => applyAntiStuck(cmd));
+      // Priority: crash peel → lost-ball scan → role policy.
+      const retreat = maybeFaceOffRetreat(d, ctx);
+      if (retreat) return applyAntiStuck(retreat);
+      if (d.role === 'goalkeeper') return applyAntiStuck(gkDecide(d, ctx));
+      if (d.id === ctx.chaserId) {
+        const search = maybeBallSearch(d, ctx);
+        if (search) return applyAntiStuck(search);
+        return applyKickSafety(applyAntiStuck(chaserDecide(d, ctx)), d, ctx);
+      }
+      return applyKickSafety(applyAntiStuck(formationDecide(d, ctx)), d, ctx);
+    });
   } finally {
     TUNE = prevTune;
   }

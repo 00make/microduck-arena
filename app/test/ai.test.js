@@ -9,7 +9,8 @@ import {
   BaseAgent, ForwardAgent, DefenderAgent, GoalkeeperAgent,
   VX_MAX, VX_MIN, WZ_MAX, SHOOT_SPEED, SHOOT_DIST,
   createAgent, decideAll, assignChaserId, chaseCost, chaseApproachPoint,
-  isBehindBall, lateralOrbitPoint, repelWalkTarget, BASE_TUNE,
+  isBehindBall, lateralOrbitPoint, repelWalkTarget, opponentFovFill, isKickSafe,
+  ballInFov, BASE_TUNE,
 } from '../src/game/football/ai/index.js';
 import { FIELD_HALF_L } from '../src/game/football/constants.js';
 
@@ -567,7 +568,7 @@ describe('decideAll', () => {
   it('behind ball and facing shotDir → kick toward opponent goal', () => {
     const ducks = [
       {
-        id: 0, pos: [-0.35, 0], yaw: 0, role: 'forward', fallen: false, penalized: false,
+        id: 0, pos: [-0.28, 0], yaw: 0, role: 'forward', fallen: false, penalized: false,
         team: 'red', spawnX: -0.8, spawnY: 0.5,
         _ai: { aimTicks: 0, kickCooldown: 0, kickHoldTicks: 0, atFeetTicks: 5 },
       },
@@ -577,6 +578,48 @@ describe('decideAll', () => {
     const ball = { x: 0, y: 0, vx: 0, vy: 0 };
     const cmds = decideAll(ducks, { ball, allDucks: ducks, team: 'red' });
     assert.equal(cmds[0].kick, true);
+  });
+
+  it('does not kick from mid-range (air boot) — must be in KICK_CONTACT', () => {
+    // Behind + aligned but ~0.5 m away: AIM/chase only, no kick.
+    const ducks = [
+      {
+        id: 0, pos: [-0.5, 0], yaw: 0, role: 'forward', fallen: false, penalized: false,
+        team: 'red', spawnX: -0.8, spawnY: 0.5,
+        _ai: { aimTicks: 10, kickCooldown: 0, kickHoldTicks: 0, atFeetTicks: 5 },
+      },
+      { id: 1, pos: [-1.5, -0.5], yaw: 0, role: 'forward', fallen: false, penalized: false, team: 'red' },
+      { id: 2, pos: [-2.8, 0], yaw: 0, role: 'goalkeeper', fallen: false, penalized: false, team: 'red' },
+    ];
+    const ball = { x: 0, y: 0, vx: 0, vy: 0 };
+    const cmds = decideAll(ducks, { ball, allDucks: ducks, team: 'red' });
+    assert.equal(cmds[0].kick, false, 'mid-range must not air-kick');
+    assert.ok(cmds[0].vx > 0.05, 'should still walk in toward the ball');
+  });
+
+  it('after a contact kick the chaser keeps claim instead of walking off', () => {
+    const ducks = [
+      {
+        id: 0, pos: [-0.28, 0], yaw: 0, role: 'forward', fallen: false, penalized: false,
+        team: 'red', spawnX: -0.8, spawnY: 0.5,
+        _ai: { aimTicks: 0, kickCooldown: 0, kickHoldTicks: 0, atFeetTicks: 5, holdingChase: true },
+      },
+      {
+        id: 1, pos: [-0.4, 0.15], yaw: 0, role: 'forward', fallen: false, penalized: false,
+        team: 'red', spawnX: -0.8, spawnY: -0.5, _ai: {},
+      },
+      { id: 2, pos: [-2.8, 0], yaw: 0, role: 'goalkeeper', fallen: false, penalized: false, team: 'red' },
+    ];
+    const ball = { x: 0, y: 0, vx: 0, vy: 0 };
+    const cmds = decideAll(ducks, { ball, allDucks: ducks, team: 'red' });
+    assert.equal(cmds[0].kick, true);
+    assert.ok(ducks[0]._ai.postKickClaim > 0, 'post-kick claim should arm');
+    // Teammate is closer after the kick tick — sticky claim must still hold.
+    ducks[0].pos = [-0.55, 0.05];
+    ducks[1].pos = [-0.32, 0.02];
+    decideAll(ducks, { ball, allDucks: ducks, team: 'red' });
+    assert.equal(ducks[0]._ai.holdingChase, true, 'kicker must keep chase claim');
+    assert.equal(ducks[1]._ai.holdingChase, false);
   });
 
   it('AIM does not poke while still turning (avoids own-goal boots)', () => {
@@ -597,6 +640,31 @@ describe('decideAll', () => {
       ducks[0].yaw += cmds[0].wz * 0.1;
     }
     assert.equal(kickCount, 0, 'off-angle AIM must not poke');
+  });
+
+  it('isKickSafe refuses boots aimed at the own goal', () => {
+    const ball = { x: -1.5, y: 0 };
+    assert.equal(isKickSafe(0, 1, ball, -FIELD_HALF_L), true, 'red facing +X is safe');
+    assert.equal(isKickSafe(Math.PI, 1, ball, -FIELD_HALF_L), false, 'red facing −X is own-goal');
+    assert.equal(isKickSafe(Math.PI, -1, ball, FIELD_HALF_L), true, 'blue facing −X is safe');
+    assert.equal(isKickSafe(0, -1, ball, FIELD_HALF_L), false, 'blue facing +X is own-goal');
+  });
+
+  it('own-half chaser facing own goal must not kick', () => {
+    // Red own half, behind ball, contact range, but yaw toward own net.
+    const ducks = [
+      {
+        id: 0, pos: [-2.05, 0], yaw: Math.PI, role: 'forward', fallen: false, penalized: false,
+        team: 'red', spawnX: -0.8, spawnY: 0.5,
+        _ai: { aimTicks: 20, kickCooldown: 0, kickHoldTicks: 0, atFeetTicks: 15 },
+      },
+      { id: 1, pos: [-1.0, -0.8], yaw: 0, role: 'forward', fallen: false, penalized: false, team: 'red' },
+      { id: 2, pos: [-2.8, 0], yaw: 0, role: 'goalkeeper', fallen: false, penalized: false, team: 'red' },
+    ];
+    const ball = { x: -1.8, y: 0, vx: 0, vy: 0 };
+    const cmds = decideAll(ducks, { ball, allDucks: ducks, team: 'red' });
+    assert.equal(cmds[0].kick, false, 'must clear upfield, never boot own goal');
+    assert.ok(Math.abs(cmds[0].wz) > 0.2, 'should turn toward upfield clear');
   });
 
   it('chaseApproachPoint sits behind a still ball on the shot axis (Booster approach_target)', () => {
@@ -735,6 +803,91 @@ describe('decideAll', () => {
     }
     const dBlock = distanceTo(ducks[1].pos[0], ducks[1].pos[1], slotX, slotY);
     assert.ok(dBlock > BASE_TUNE.AVOID_RADIUS * 0.45, `walked onto blocker (d=${dBlock})`);
+  });
+
+  it('opponentFovFill is high when nose-to-nose, low when far', () => {
+    const close = opponentFovFill(0, 0, 0, { pos: [0.22, 0] });
+    const far = opponentFovFill(0, 0, 0, { pos: [1.5, 0] });
+    const side = opponentFovFill(0, 0, 0, { pos: [0, 0.22] }); // 90° off axis
+    assert.ok(close >= BASE_TUNE.BLOCK_FILL, `face-off fill=${close}`);
+    assert.ok(far < 0.25, `far fill=${far}`);
+    assert.equal(side, 0, 'side blocker must be outside FOV');
+  });
+
+  it('ballInFov is true ahead and false behind', () => {
+    const ball = { x: 1, y: 0 };
+    assert.equal(ballInFov(0, 0, 0, ball), true);
+    assert.equal(ballInFov(0, 0, Math.PI, ball), false);
+  });
+
+  it('face-off: opponent filling FOV for 3s triggers reverse retreat', () => {
+    // Red chaser nose-to-nose with a blue duck — after BLOCK_HOLD_TICKS, vx < 0.
+    const ducks = [
+      {
+        id: 0, pos: [0, 0], yaw: 0, role: 'forward', fallen: false, penalized: false,
+        team: 'red', spawnX: -0.8, spawnY: 0.5,
+        _ai: { blockTicks: 0, retreatTicks: 0, holdingChase: true },
+      },
+      { id: 1, pos: [-1.2, -0.8], yaw: 0, role: 'forward', fallen: false, penalized: false, team: 'red' },
+      { id: 2, pos: [-2.8, 0], yaw: 0, role: 'goalkeeper', fallen: false, penalized: false, team: 'red' },
+      { id: 3, pos: [0.22, 0], yaw: Math.PI, role: 'forward', fallen: false, penalized: false, team: 'blue' },
+    ];
+    const ball = { x: 0.8, y: 0, vx: 0, vy: 0 };
+    const gs = { ball, allDucks: ducks, team: 'red' };
+    let retreated = false;
+    for (let t = 0; t < BASE_TUNE.BLOCK_HOLD_TICKS + 2; t++) {
+      const cmds = decideAll(ducks, gs);
+      if (cmds[0].vx < -0.05) {
+        retreated = true;
+        assert.equal(cmds[0].kick, false);
+        break;
+      }
+    }
+    assert.ok(retreated, 'should reverse after sustained FOV block');
+    assert.ok(ducks[0]._ai.retreatTicks > 0, 'retreat fuse should be armed');
+  });
+
+  it('face-off does not retreat when ball is in view and nearer than opponent', () => {
+    const ducks = [
+      {
+        id: 0, pos: [0, 0], yaw: 0, role: 'forward', fallen: false, penalized: false,
+        team: 'red', spawnX: -0.8, spawnY: 0.5,
+        _ai: { blockTicks: BASE_TUNE.BLOCK_HOLD_TICKS - 1, retreatTicks: 0, holdingChase: true },
+      },
+      { id: 1, pos: [-1.2, -0.8], yaw: 0, role: 'forward', fallen: false, penalized: false, team: 'red' },
+      { id: 2, pos: [-2.8, 0], yaw: 0, role: 'goalkeeper', fallen: false, penalized: false, team: 'red' },
+      // Opponent close in FOV, but ball is even closer ahead.
+      { id: 3, pos: [0.35, 0.05], yaw: Math.PI, role: 'forward', fallen: false, penalized: false, team: 'blue' },
+    ];
+    const ball = { x: 0.2, y: 0, vx: 0, vy: 0 };
+    const cmds = decideAll(ducks, { ball, allDucks: ducks, team: 'red' });
+    assert.ok(cmds[0].vx >= 0, 'must not reverse when focusing the nearer ball');
+  });
+
+  it('chaser scans after ball leaves FOV for BALL_LOST_TICKS', () => {
+    // Face away from the ball so it is out of FOV every tick.
+    const ducks = [
+      {
+        id: 0, pos: [0, 0], yaw: Math.PI, role: 'forward', fallen: false, penalized: false,
+        team: 'red', spawnX: -0.8, spawnY: 0.5,
+        _ai: { ballLostTicks: 0, scanTicks: 0, scanDir: 1, holdingChase: true },
+      },
+      { id: 1, pos: [-1.5, -0.8], yaw: 0, role: 'forward', fallen: false, penalized: false, team: 'red' },
+      { id: 2, pos: [-2.8, 0], yaw: 0, role: 'goalkeeper', fallen: false, penalized: false, team: 'red' },
+    ];
+    const ball = { x: 1.2, y: 0, vx: 0, vy: 0 };
+    const gs = { ball, allDucks: ducks, team: 'red' };
+    let scanned = false;
+    for (let t = 0; t < BASE_TUNE.BALL_LOST_TICKS + 5; t++) {
+      decideAll(ducks, gs);
+      // Keep back to the ball so lostTicks can accumulate.
+      ducks[0].yaw = Math.PI;
+      if (ducks[0]._ai.scanTicks > 0) {
+        scanned = true;
+        break;
+      }
+    }
+    assert.ok(scanned, 'chaser should arm scanTicks after losing the ball from FOV');
   });
 });
 

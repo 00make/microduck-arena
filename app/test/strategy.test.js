@@ -60,7 +60,7 @@ describe('strategy continuous knobs', () => {
     assert.equal(atk.LINE_PUSH_MID, 1);
     assert.ok(atk.SECOND_PRESS_DIST > 1.5);
     assert.ok(def.SECOND_PRESS_DIST < 0.4);
-    assert.ok(atk.SHOOT_ANGLE > def.SHOOT_ANGLE + 0.2);
+    assert.ok(atk.SHOOT_ANGLE > def.SHOOT_ANGLE + 0.1);
   });
 
   it('knobsToOverlay interpolates continuously', () => {

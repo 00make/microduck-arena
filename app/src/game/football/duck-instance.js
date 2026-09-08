@@ -29,6 +29,8 @@ export function createDuckInstance(id, config, addrs, rig = null) {
     lastAction: new Float32Array(NUM_JOINTS),
     // Active policy mode
     mode: 'walk',
+    // Per-duck locomotion ('legs' | 'rollers'). Football packs may mix teams.
+    loco: 'legs',
     // AI agent (null for sandbox mode, set in Phase 2)
     agent: null,
     // Fall recovery state machine (mirrors game.js recovery logic)

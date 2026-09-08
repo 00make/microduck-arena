@@ -24,8 +24,9 @@ export const useGame = create(
 
     // Game state mirrored for the UI
     modeLabel: "Run",
-    loco: "legs", // "legs" | "rollers" - what the game is actually running
-    locoWant: "legs", // what the quickbar asked for (game reconciles)
+    loco: "legs", // "legs" | "rollers" - sandbox actual; football: coarse flag
+    locoWant: "legs", // sandbox quickbar intent
+    locoByTeam: { red: "legs", blue: "legs" }, // football: per-side loco
     locoSwitching: false,
     rollersLoading: false, // OSD line while the roller stack streams in
     variant: "classic",
@@ -87,6 +88,14 @@ export const useGame = create(
     // Commentary danmaku overlay (persisted via FootballHud toggle)
     danmakuEnabled: (() => {
       try { return localStorage.getItem("microduck-danmaku") !== "0"; } catch { return true; }
+    })(),
+    // Match sim speed multiplier (1 | 2 | 3). Applied as N control steps
+    // per wall-clock CTRL_DT so MuJoCo/ONNX keep a fixed timestep.
+    simSpeed: (() => {
+      try {
+        const n = Number(localStorage.getItem("microduck-sim-speed"));
+        return n === 2 || n === 3 ? n : 1;
+      } catch { return 1; }
     })(),
     // Live dual-team match report (4 Hz) — possession + shots + strategy tags
     tacticsBoard: null,
