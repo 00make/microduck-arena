@@ -3,14 +3,14 @@
 // palette, zero-radius panel plates with cream keyline frames).
 import Box from "@mui/material/Box";
 import { keyframes } from "@mui/material/styles";
-import { useState } from "react";
-import { useGame } from "../store.js";
-import { uiClick, isMuted, setMuted } from "../game/audio.js";
+import { useGame, gameApi } from "../store.js";
+import { uiClick } from "../game/audio.js";
 import { ORANGE, MONO } from "../theme.js";
 import { ANTON, COMIC_INK, CREAM, COMIC_ORANGE } from "../ui/comic.jsx";
 import { GitHubLink } from "../ui/GitHubLink.jsx";
 import { formatClock, stateLabel, eventLabel, recentEvents } from "./hud-logic.js";
 import { t, teamLabel, strategyTag } from "./i18n.js";
+import CommentaryDanmaku from "./CommentaryDanmaku.jsx";
 import StrategyBoard from "./StrategyBoard.jsx";
 import TeamFpv from "./TeamFpv.jsx";
 
@@ -153,13 +153,15 @@ function BackButton() {
           <BackArrowIcon /> {t(locale, "back")}
         </Box>
       </Box>
-      <SoundMuteButton />
+      <DanmakuToggleButton />
+      <SpeedToggleButton />
     </Box>
   );
 }
 
-function SoundMuteButton() {
-  const [muted, setMutedState] = useState(isMuted);
+function DanmakuToggleButton() {
+  const locale = useGame((s) => s.locale) || "en";
+  const enabled = useGame((s) => s.danmakuEnabled !== false);
   return (
     <Box
       sx={{
@@ -172,19 +174,19 @@ function SoundMuteButton() {
       <Box
         component="button"
         type="button"
-        aria-label={muted ? "Unmute" : "Mute"}
-        aria-pressed={muted}
+        aria-label={enabled ? t(locale, "danmakuOff") : t(locale, "danmakuOn")}
+        aria-pressed={enabled}
         onClick={() => {
-          const next = !muted;
-          setMuted(next);
-          setMutedState(next);
-          if (!next) uiClick();
+          const next = !enabled;
+          useGame.setState({ danmakuEnabled: next });
+          try { localStorage.setItem("microduck-danmaku", next ? "1" : "0"); } catch { /* private mode */ }
+          uiClick();
         }}
         sx={{
           appearance: "none",
           border: "none",
           background: "transparent",
-          color: muted ? "rgba(250,248,242,0.45)" : CREAM,
+          color: enabled ? CREAM : "rgba(250,248,242,0.45)",
           cursor: "pointer",
           fontFamily: MONO,
           fontSize: "0.65rem",
@@ -194,7 +196,56 @@ function SoundMuteButton() {
           "&:hover": { color: ORANGE },
         }}
       >
-        {muted ? "MUTED" : "SFX"}
+        {enabled ? t(locale, "danmakuOn") : t(locale, "danmakuOff")}
+      </Box>
+    </Box>
+  );
+}
+
+function SpeedToggleButton() {
+  const locale = useGame((s) => s.locale) || "en";
+  const simSpeed = useGame((s) => s.simSpeed) || 1;
+  const n = simSpeed === 2 || simSpeed === 3 ? simSpeed : 1;
+  return (
+    <Box
+      sx={{
+        ...scorePlateSx,
+        flexDirection: "row",
+        minWidth: "unset",
+        padding: "6px 12px",
+      }}
+    >
+      <Box
+        component="button"
+        type="button"
+        aria-label={t(locale, "speedAria", { n: String(n) })}
+        onClick={() => {
+          if (typeof gameApi.cycleSimSpeed === "function") {
+            gameApi.cycleSimSpeed();
+          } else {
+            const cur = useGame.getState().simSpeed;
+            const next = cur >= 3 ? 1 : (Number(cur) || 1) + 1;
+            useGame.setState({ simSpeed: next });
+            try { localStorage.setItem("microduck-sim-speed", String(next)); } catch { /* private */ }
+          }
+          uiClick();
+        }}
+        sx={{
+          appearance: "none",
+          border: "none",
+          background: "transparent",
+          color: n > 1 ? ORANGE : CREAM,
+          cursor: "pointer",
+          fontFamily: MONO,
+          fontSize: "0.65rem",
+          letterSpacing: "0.08em",
+          textTransform: "uppercase",
+          lineHeight: 1,
+          minWidth: "2.4em",
+          "&:hover": { color: ORANGE },
+        }}
+      >
+        {t(locale, "speedLabel", { n: String(n) })}
       </Box>
     </Box>
   );
@@ -305,6 +356,9 @@ export function MatchResultBanner() {
 
   const redTag = strategyTag(locale, tacticsCard?.strategy?.red);
   const blueTag = strategyTag(locale, tacticsCard?.strategy?.blue);
+  const locoTag = tacticsCard?.loco === "rollers"
+    ? t(locale, "locoRollers")
+    : t(locale, "locoLegs");
   const shotsR = tacticsCard?.shots?.red ?? 0;
   const shotsB = tacticsCard?.shots?.blue ?? 0;
   const possPct = Math.round(clamp01(tacticsCard?.possession?.redPct ?? 0.5) * 100);
@@ -447,6 +501,19 @@ export function MatchResultBanner() {
                 {t(locale, "boardVs")}
               </Box>
               <Box component="span" sx={{ color: BLUE_ACCENT }}>{blueTag}</Box>
+              <Box
+                component="div"
+                sx={{
+                  mt: "0.35rem",
+                  fontFamily: MONO,
+                  fontSize: "0.52rem",
+                  letterSpacing: "0.12em",
+                  textTransform: "uppercase",
+                  color: "rgba(255,255,255,0.45)",
+                }}
+              >
+                {t(locale, "locoMode")} · {locoTag}
+              </Box>
             </Box>
             <Box
               sx={{
@@ -610,6 +677,7 @@ export default function FootballHud() {
         }}
       />
       <MatchResultBanner />
+      <CommentaryDanmaku />
       <EventTicker />
       <PenaltyIndicator />
       <StrategyBoard />

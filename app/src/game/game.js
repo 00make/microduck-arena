@@ -62,15 +62,18 @@ import { createBallVisual } from "./ball-visual.js";
 // Football-mode field plumbing (inert on the default sandbox path: the
 // goal-openings branch only runs when fieldConfig.walls asks for it).
 import { getGoalCollisionGeoms, createGoalMesh } from "./football/goal.js";
-import { GOAL_WIDTH, SPAWN_POSITIONS, BALL_SPAWN, PENALTY_DURATION_S, FIELD_HALF_W } from "./football/constants.js";
+import { GOAL_WIDTH, SPAWN_POSITIONS, BALL_SPAWN, PENALTY_DURATION_S, FIELD_HALF_W, GOAL_DEPTH } from "./football/constants.js";
 import {
   DEFAULT_STRATEGY,
   buildSpawnTable,
   getTuneOverlay,
   normalizeStrategy,
+  mergeStrategy,
   strategiesForUser,
+  strategyFingerprint,
 } from "./football/strategy.js";
 import { buildTacticsBoard, createMatchStats } from "./football/tactics-board.js";
+import { applyLocoLimits } from "./football/loco.js";
 // Multi-duck match plumbing: SANDBOX_CONFIG is the default matchConfig that
 // reproduces the single-duck arena exactly; FOOTBALL_CONFIG (passed in by
 // FootballCanvas) drives the 3v3 pitch. createDuckInstance holds per-duck
@@ -78,7 +81,8 @@ import { buildTacticsBoard, createMatchStats } from "./football/tactics-board.js
 import { SANDBOX_CONFIG } from "./football/match-config.js";
 import { createDuckInstance } from "./football/duck-instance.js";
 import { createAgent, decideAll, assignChaserId } from "./football/ai/index.js";
-import { createReferee } from "./football/referee.js";
+import { createReferee, decide as decideReferee } from "./football/referee.js";
+import { createMatchDebugLog } from "./football/match-debug-log.js";
 import { createCelebration } from "./football/celebration.js";
 import { initStickers } from "./stickers.js";
 import { useGame, gameApi, bootLine, bootNote, bootHalt, bootLog } from "../store.js";
@@ -207,12 +211,13 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
   const setStore = useGame.setState;
   const store = useGame.getState;
 
-  // Coach tactics: mutable spawn table + per-team strategy. Style/press apply
+  // Coach tactics: mutable spawn table + per-team strategy cards. Knobs apply
   // every AI tick; formation roles/spawns apply at kickoff (locked after start).
   let activeSpawns = SPAWN_POSITIONS.map((s) => ({ ...s }));
   let strategyByTeam = strategiesForUser(
     store().userTeam || "red",
     store().userStrategy || DEFAULT_STRATEGY,
+    store().opponentStrategy || DEFAULT_STRATEGY,
   );
   let formationLocked = false;
 
@@ -422,12 +427,16 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
     // the original sensor/actuator sections are removed and re-injected once
     // per duck, in order, so qpos/ctrl/sensordata lay out as duck0, duck1,
     // ..., duck5, ball. Skipped entirely for the single-duck sandbox.
+    //
+    // Per-duck loco: dc.loco may be 'legs' | 'rollers'. When any duck is on
+    // rollers, the roller MJCF is loaded as a second body/sensor/actuator
+    // template and its unique meshes are merged into this doc's assets.
     const multiDuck = duckConfigs.length > 1;
     if (multiDuck) {
       const worldbody = doc.querySelector("worldbody");
       const origBody = worldbody.querySelector('body[name="trunk_base"]');
       const ballBodyEl = worldbody.querySelector('body[name="ball"]');
-      const origClone = origBody.cloneNode(true);
+      const legsBodyClone = origBody.cloneNode(true);
       origBody.remove();
       const PREFIX_ATTRS = ["name", "site", "body", "objname", "joint",
         "body1", "body2", "target", "tendon", "refsite"];
@@ -441,18 +450,68 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
       };
       const sensorParent = doc.querySelector("sensor");
       const actuatorParent = doc.querySelector("actuator");
-      const origSensors = sensorParent ? [...sensorParent.children].map((s) => s.cloneNode(true)) : [];
-      const origActuators = actuatorParent ? [...actuatorParent.children].map((a) => a.cloneNode(true)) : [];
+      const legsSensors = sensorParent ? [...sensorParent.children].map((s) => s.cloneNode(true)) : [];
+      const legsActuators = actuatorParent ? [...actuatorParent.children].map((a) => a.cloneNode(true)) : [];
       while (sensorParent && sensorParent.firstChild) sensorParent.removeChild(sensorParent.firstChild);
       while (actuatorParent && actuatorParent.firstChild) actuatorParent.removeChild(actuatorParent.firstChild);
+
+      let rollerBodyClone = null;
+      let rollerSensors = [];
+      let rollerActuators = [];
+      const needsRollers = duckConfigs.some((dc) => (dc.loco || "legs") === "rollers");
+      if (needsRollers) {
+        const rSrc = await (await fetch(signed(`${MODEL_DIR}/robot_allcollisions_rollers.xml`))).text();
+        const rDoc = new DOMParser().parseFromString(rSrc, "text/xml");
+        for (const g of [...rDoc.querySelectorAll('geom[class="visual"]')]) g.remove();
+        const rUsed = new Set(
+          [...rDoc.querySelectorAll("geom[mesh]")].map((g) => g.getAttribute("mesh")),
+        );
+        for (const m of [...rDoc.querySelectorAll("asset > mesh")]) {
+          const name = m.getAttribute("name") ?? m.getAttribute("file").replace(/\.stl$/i, "");
+          if (!rUsed.has(name)) m.remove();
+        }
+        // Merge roller-only mesh assets into the primary doc.
+        const asset = doc.querySelector("asset");
+        const haveMesh = new Set(
+          [...asset.querySelectorAll("mesh")].map((m) => m.getAttribute("file")),
+        );
+        for (const m of [...rDoc.querySelectorAll("asset > mesh")]) {
+          const file = m.getAttribute("file");
+          if (file && !haveMesh.has(file)) {
+            asset.appendChild(m.cloneNode(true));
+            haveMesh.add(file);
+          }
+        }
+        // Also merge any materials the roller geoms reference (name-keyed).
+        const haveMat = new Set(
+          [...asset.querySelectorAll("material")].map((m) => m.getAttribute("name")),
+        );
+        for (const m of [...rDoc.querySelectorAll("asset > material")]) {
+          const name = m.getAttribute("name");
+          if (name && !haveMat.has(name)) {
+            asset.appendChild(m.cloneNode(true));
+            haveMat.add(name);
+          }
+        }
+        rollerBodyClone = rDoc.querySelector('body[name="trunk_base"]').cloneNode(true);
+        const rSens = rDoc.querySelector("sensor");
+        const rAct = rDoc.querySelector("actuator");
+        rollerSensors = rSens ? [...rSens.children].map((s) => s.cloneNode(true)) : [];
+        rollerActuators = rAct ? [...rAct.children].map((a) => a.cloneNode(true)) : [];
+      }
+
       for (const dc of duckConfigs) {
-        const bodyClone = origClone.cloneNode(true);
+        const isRoller = (dc.loco || "legs") === "rollers";
+        const template = isRoller ? rollerBodyClone : legsBodyClone;
+        const bodyClone = template.cloneNode(true);
         prefixSubtree(bodyClone, dc.prefix);
         worldbody.insertBefore(bodyClone, ballBodyEl);
-        if (sensorParent) for (const s of origSensors) {
+        const sensSrc = isRoller ? rollerSensors : legsSensors;
+        const actSrc = isRoller ? rollerActuators : legsActuators;
+        if (sensorParent) for (const s of sensSrc) {
           const sc = s.cloneNode(true); prefixSubtree(sc, dc.prefix); sensorParent.appendChild(sc);
         }
-        if (actuatorParent) for (const a of origActuators) {
+        if (actuatorParent) for (const a of actSrc) {
           const ac = a.cloneNode(true); prefixSubtree(ac, dc.prefix); actuatorParent.appendChild(ac);
         }
       }
@@ -721,7 +780,9 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
   let referee = null;
   let celebration = null;
   let matchStats = isFootball ? createMatchStats() : null;
+  let matchLog = isFootball ? createMatchDebugLog() : null;
   let prevBallX = 0, prevBallY = 0;
+  let prevBallPosRef = null; // full [x,y,z] for near-goal decide() logging
   let matchStoreTick = 0;
 
   let mode = "walk"; // "walk" | "sitstand" | "roll" | "kickL" | "kickR" | "crouch" | "groundpick"
@@ -1173,10 +1234,13 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
   // Shared ONNX session pool: every duck draws the same walk / kick / stand
   // sessions as the sandbox duck, selected from that duck's own mode. The
   // fall-recovery ladder overrides with the get-up policy while it owns the
-  // duck (mirrors activeSession()).
+  // duck (mirrors activeSession()). Rollers map walk → drive (sandbox parity).
   function sessionFor(duck) {
     if (duck.recovery?.state === "recovering") return sessions.stand;
-    return sessions[duck.mode] ?? sessions.walk;
+    const m = duck.mode;
+    const duckLoco = duck.loco || loco;
+    if (duckLoco === "rollers" && m === "walk") return sessions.drive ?? sessions.walk;
+    return sessions[m] ?? sessions.walk;
   }
 
   // Per-duck projected-gravity z (trunk tilt), read from that duck's own
@@ -1190,11 +1254,17 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
 
   // Per-duck dead-pose test: "fallen" = trunk tipped past ~60 deg or sunk
   // below the floor; NaN/Inf is a solver explosion (no grace, reset now).
+  // Rollers: ignore brief z dips from wheel contacts — tip angle only.
   function duckPoseIsDead(duck) {
     const fj = duck.addrs.freejointQposAdr;
     const z = data.qpos[fj + 2];
     const gz = duckProjGravZ(duck);
     if (!Number.isFinite(z) || !Number.isFinite(gz)) return "exploded";
+    const isRoller = loco === "rollers" || duck.loco === "rollers";
+    if (isRoller) {
+      if (gz > -0.4) return "fallen"; // ~66° tip; bumps shouldn't count
+      return null;
+    }
     if (gz > -0.5 || z < 0.02) return "fallen";
     return null;
   }
@@ -1226,6 +1296,9 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
     buf[i++] = kicking ? 0 : cs[0];  // vx
     buf[i++] = 0;                    // no strafe: AI writes vx and wz only
     buf[i++] = kicking ? 0 : cs[2];  // wz
+    // Head slots stay zero for football: feeding gaze into the walk ONNX
+    // (large neck/pitch near the ball) topples chasers, then the pile-up
+    // knocks the rest. FPV is a separate eye-cam (heading-led, light ball bias).
     for (let k = 3; k < CMD_SIZE; k++) buf[i++] = 0;
     return buf;
   }
@@ -1256,6 +1329,30 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
     duck.cmd.fill(0);
     duck.cmdSm.fill(0);
     mujoco.mj_forward(model, data);
+  }
+
+  // Rollers have no stand-up ONNX: after a spill, stand them back up where
+  // they are (keep xy + yaw). Spawning back to kickoff looked like ducks
+  // vanishing into the distance after every collision.
+  function uprightDuckInPlace(duck) {
+    const q = data.qpos;
+    const fj = duck.addrs.freejointQposAdr;
+    const x = Number.isFinite(q[fj]) ? q[fj] : 0;
+    const y = Number.isFinite(q[fj + 1]) ? q[fj + 1] : 0;
+    const w = q[fj + 3], xq = q[fj + 4], yq = q[fj + 5], zq = q[fj + 6];
+    const yaw = Number.isFinite(duck.yaw)
+      ? duck.yaw
+      : Math.atan2(2 * (w * zq + xq * yq), 1 - 2 * (yq * yq + zq * zq));
+    placeDuck(duck, [x, y, 0.12], Number.isFinite(yaw) ? yaw : 0);
+    duck.recovery = null;
+    duck.fallDebounce = 0;
+    duck.fallenSince = null;
+    duck.mode = "walk";
+    duck.lastAction.fill(0);
+    duck.kickRun = null;
+    duck.postKickLock = 0;
+    duck.cmd.fill(0);
+    duck.cmdSm.fill(0);
   }
 
   // Per-duck state machine: penalty sin-bin countdown, the kick one-shot
@@ -1295,7 +1392,20 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
         }
       }
     } else if (death === "fallen") {
-      if (duck.mode === "walk" && duck.postKickLock === 0) {
+      // Rollers: no get-up policy. Debounce collision tips, then upright
+      // in place — never teleport to spawn (that read as "vanish / re-enter").
+      if (loco === "rollers" || duck.loco === "rollers") {
+        duck.fallenSince = null;
+        if (++duck.fallDebounce >= FALL_DEBOUNCE_STEPS) {
+          duck.fallDebounce = 0;
+          uprightDuckInPlace(duck);
+          playSfx("thump", {
+            gain: 0.22,
+            rate: 0.52 + Math.random() * 0.08,
+          });
+          haptics.pulse("fall");
+        }
+      } else if (duck.mode === "walk" && duck.postKickLock === 0) {
         duck.fallenSince = null;
         if (++duck.fallDebounce >= FALL_DEBOUNCE_STEPS) {
           duck.fallDebounce = 0;
@@ -1413,7 +1523,14 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
       };
     });
     const team = teamDucks[0].team;
-    const tuneOverlay = getTuneOverlay(strategyByTeam[team] || DEFAULT_STRATEGY);
+    // Strategy card → intent overlay; per-TEAM loco → speed envelope only.
+    const teamLoco = teamDucks[0]?.loco === "rollers"
+      || store().locoByTeam?.[team] === "rollers"
+      ? "rollers" : "legs";
+    const tuneOverlay = applyLocoLimits(
+      getTuneOverlay(strategyByTeam[team] || DEFAULT_STRATEGY),
+      teamLoco,
+    );
     const cmds = decideAll(views, {
       ball: gs.ball,
       allDucks: gs.ducks,
@@ -1436,23 +1553,39 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
       outVx = outVx === 0 ? IDLE_CREEP : outVx;
       duck.cmd[0] = outVx;
       duck.cmd[2] = cmdWz;
+      // Keep head command slots zero — do not drive walk-policy gaze.
+      duck.cmd[3] = 0; duck.cmd[4] = 0; duck.cmd[5] = 0; duck.cmd[6] = 0;
       if (c.kick && !duck.kickRun && duck.mode === "walk" && duck.postKickLock === 0) {
         // Alternate feet so consecutive kicks don't favour one leg.
         duck.mode = duck._lastKick === "kickL" ? "kickR" : "kickL";
         duck._lastKick = duck.mode;
         duck.kickRun = { steps: 0 };
-        // Swing whoosh — ball contact thump is handled in stepAudioFootball.
-        playSfx("thump", {
-          gain: 0.18,
-          rate: 1.35 + Math.random() * 0.2,
-        });
+        // Kick / ball / duck-bump thumps silenced — commentary danmaku cues
+        // carry the match energy instead (see playDanmakuCue).
         haptics.pulse("kick");
         // Only goal-aimed strikes (at feet + facing opp goal + attacking half).
-        matchStats?.tryNoteShot(duck.team, gs.ball, {
+        if (matchStats?.tryNoteShot(duck.team, gs.ball, {
           x: Number.isFinite(duck.pos?.[0]) ? duck.pos[0] : 0,
           y: Number.isFinite(duck.pos?.[1]) ? duck.pos[1] : 0,
           yaw: Number.isFinite(duck.yaw) ? duck.yaw : 0,
-        });
+        })) {
+          // Soft event for danmaku commentary (not a referee FSM transition).
+          const shotTime = referee?.getMatchTime() ?? 0;
+          matchLog?.push("shot", {
+            team: duck.team,
+            duckId: duck.id,
+            matchTime: shotTime,
+            ball: { x: gs.ball?.x, y: gs.ball?.y },
+            kicker: {
+              x: Number.isFinite(duck.pos?.[0]) ? duck.pos[0] : 0,
+              y: Number.isFinite(duck.pos?.[1]) ? duck.pos[1] : 0,
+            },
+          });
+          setStore({
+            matchEvents: [...useGame.getState().matchEvents.slice(-4),
+              { type: "shot", team: duck.team, time: shotTime }],
+          });
+        }
       }
     }
   }
@@ -1483,7 +1616,7 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
       }
       // Escape mode: override the AI twist until the manoeuvre budget runs out.
       if (duck._escapeTicks > 0) {
-        duck.cmd[0] = -0.25;                             // reverse, above walk dead-zone
+        duck.cmd[0] = duck.loco === "rollers" ? RVEL_BACK : -0.25; // reverse, above loco dead-zone
         duck.cmd[2] = (duck.id % 2 === 0) ? 0.6 : -0.6;  // alternating turn
         duck._escapeTicks--;
         duck._lastPos = { x: px, y: py };
@@ -1653,23 +1786,40 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
   }
 
   /**
-   * Coach panel → game. Style/press take effect next AI tick.
+   * Coach panel → game. Knobs take effect next AI tick.
    * Formation changes only apply when not locked (pre-kickoff / fresh match).
+   * opts.team selects which side's card to patch (user or rival).
    */
   function setTeamStrategy(partial = {}, opts = {}) {
     if (!isFootball) return store().userStrategy;
+    const userTeam = store().userTeam || "red";
+    const team = opts.team === "red" || opts.team === "blue" ? opts.team : userTeam;
     const allowFormation = !formationLocked || opts.forceFormation;
-    const prev = normalizeStrategy(store().userStrategy || DEFAULT_STRATEGY);
-    const next = normalizeStrategy({
-      ...prev,
+    const prev = normalizeStrategy(strategyByTeam[team] || DEFAULT_STRATEGY);
+    const merged = mergeStrategy(prev, {
       ...partial,
       formation: allowFormation
         ? (partial.formation ?? prev.formation)
         : prev.formation,
     });
-    const team = opts.team || store().userTeam || "red";
-    setStore({ userTeam: team, userStrategy: next });
-    strategyByTeam = strategiesForUser(team, next);
+    const next = normalizeStrategy(merged);
+    strategyByTeam = { ...strategyByTeam, [team]: next };
+
+    const rivalTeam = userTeam === "red" ? "blue" : "red";
+    if (team === userTeam) {
+      setStore({
+        userTeam,
+        userStrategy: next,
+        opponentStrategy: normalizeStrategy(strategyByTeam[rivalTeam]),
+      });
+    } else {
+      setStore({
+        userTeam,
+        opponentStrategy: next,
+        userStrategy: normalizeStrategy(strategyByTeam[userTeam]),
+      });
+    }
+
     if (allowFormation && next.formation !== prev.formation) {
       applyFormationFromStrategies();
     }
@@ -1678,14 +1828,36 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
 
   function setUserTeam(team) {
     if (team !== "red" && team !== "blue") return store().userTeam;
-    const strat = store().userStrategy || DEFAULT_STRATEGY;
-    setStore({ userTeam: team });
-    strategyByTeam = strategiesForUser(team, strat);
+    const prevUser = store().userTeam || "red";
+    if (team === prevUser) return team;
+    // Swap which card is "mine" vs rival so editing stays attached to sides.
+    const redCard = normalizeStrategy(strategyByTeam.red);
+    const blueCard = normalizeStrategy(strategyByTeam.blue);
+    setStore({
+      userTeam: team,
+      userStrategy: team === "red" ? redCard : blueCard,
+      opponentStrategy: team === "red" ? blueCard : redCard,
+    });
+    strategyByTeam = { red: redCard, blue: blueCard };
     if (!formationLocked) applyFormationFromStrategies();
     return team;
   }
 
   function handleRefereeEvent(type, payload) {
+    matchLog?.push(type, {
+      ...(payload || {}),
+      matchTime: referee?.getMatchTime?.() ?? payload?.time,
+      score: referee?.getScore?.() ?? payload?.score,
+      ball: (() => {
+        try {
+          return {
+            x: data.qpos[ballQposAdr],
+            y: data.qpos[ballQposAdr + 1],
+            z: data.qpos[ballQposAdr + 2],
+          };
+        } catch { return null; }
+      })(),
+    });
     switch (type) {
       case "goal": {
         setStore({
@@ -1788,7 +1960,11 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
         break;
       }
       case "extra_time": {
-        setStore({ matchState: "PLAYING" });
+        setStore({
+          matchState: "PLAYING",
+          matchEvents: [...useGame.getState().matchEvents.slice(-4),
+            { type: "extra_time", team: null, time: referee.getMatchTime() }],
+        });
         break;
       }
       case "fulltime": {
@@ -1801,6 +1977,7 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
             stats: matchStats,
             strategyByTeam,
             score: scoreNow,
+            loco,
           })
           : null;
         setStore({
@@ -1809,8 +1986,11 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
           matchResult: result,
           tacticsBoard: card,
           tacticsCard: card,
+          matchEvents: [...useGame.getState().matchEvents.slice(-4),
+            { type: "fulltime", team: result === "draw" ? null : result, time: referee.getMatchTime() }],
         });
         celebration?.cancel();
+        matchLog?.flush("fulltime");
         break;
       }
     }
@@ -1872,12 +2052,12 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
     if (hz < PERF_CTRL_HZ_FLOOR) {
       degraded = true;
       aiDivider = (matchConfig.ai?.divider ?? 1) * 2; // 10 Hz -> 5 Hz
-      if (renderer?.setPixelRatio) {
-        renderer.setPixelRatio(Math.max(1, renderer.getPixelRatio() * 0.5));
-      }
+      // Do NOT touch renderer.setPixelRatio here — R3F owns the drawing
+      // buffer size/DPR. Halving DPR out-of-band desynced the main canvas
+      // (pitch vanished) while FPV RTs kept working. AI throttle alone.
       console.warn(
         `[football] perf gate: ctrlHz ${hz.toFixed(1)} < ${PERF_CTRL_HZ_FLOOR} for`
-        + ` ${PERF_WINDOW_MS}ms -> aiDivider ${aiDivider} (5 Hz), dpr halved`,
+        + ` ${PERF_WINDOW_MS}ms -> aiDivider ${aiDivider} (5 Hz)`,
       );
     }
   }
@@ -1893,6 +2073,8 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
       const cs = duck.cmdSm, c = duck.cmd;
       cs[0] += (c[0] - cs[0]) * CMD_SMOOTH_ALPHA;
       cs[2] += (c[2] - cs[2]) * CMD_SMOOTH_ALPHA;
+      // Head slots unused in football — keep smoothed head at zero.
+      cs[3] = 0; cs[4] = 0; cs[5] = 0; cs[6] = 0;
     }
     const ctrl = data.ctrl;
     // ONNX inference (per-duck, sequential over the shared pool) timed on its
@@ -1915,9 +2097,30 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
     // Referee step (football mode): reads fresh ball/duck poses, emits events.
     if (referee) {
       const gs = buildRefereeState();
+      const stateBefore = referee.getState();
+      const verdict = matchLog && (stateBefore === "PLAYING" || stateBefore === "KICKOFF")
+        ? decideReferee(prevBallPosRef, gs)
+        : null;
       referee.step(CTRL_DT, gs);
+      if (verdict) {
+        matchLog.noteDanger({
+          state: referee.getState(),
+          score: referee.getScore(),
+          matchTime: referee.getMatchTime(),
+          lastTouch: referee.getLastTouchTeam(),
+          ball: gs.ball.pos,
+          vel: [
+            data.qvel[ballDofAdr],
+            data.qvel[ballDofAdr + 1],
+            data.qvel[ballDofAdr + 2],
+          ],
+          goal: verdict.goal,
+          oob: verdict.outOfBounds,
+        });
+      }
       prevBallX = gs.ball.pos[0];
       prevBallY = gs.ball.pos[1];
+      prevBallPosRef = gs.ball.pos.slice();
       matchStats?.tick(CTRL_DT, {
         matchState: referee.getState(),
         lastTouchTeam: referee.getLastTouchTeam(),
@@ -1926,13 +2129,23 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
     for (const duck of ducks) updateDuckStateFootball(duck);
     // Ball watchdog: a solver glitch that tunnels the ball out of the pitch
     // brings it back to the centre spot. Suppressed while the referee owns
-    // ball placement (GOAL / DEAD_BALL / SET_PIECE states).
+    // ball placement (GOAL / DEAD_BALL / SET_PIECE states). Allow the full
+    // goal-cage depth so a ball sitting in the net is not yeeted before the
+    // referee can award the goal.
     const refState = referee?.getState();
     if (ballActive && (!refState || refState === "PLAYING" || refState === "KICKOFF")) {
       const q = data.qpos;
-      const limX = matchConfig.field.halfX + 0.1;
+      const limX = matchConfig.field.halfX + 0.1 + (GOAL_DEPTH || 0.3);
       const limY = matchConfig.field.halfY + 0.1;
-      if (Math.abs(q[ballQposAdr]) > limX || Math.abs(q[ballQposAdr + 1]) > limY) spawnBallFootball();
+      if (Math.abs(q[ballQposAdr]) > limX || Math.abs(q[ballQposAdr + 1]) > limY) {
+        matchLog?.push("watchdog_ball", {
+          ball: { x: q[ballQposAdr], y: q[ballQposAdr + 1], z: q[ballQposAdr + 2] },
+          limX, limY,
+          state: refState,
+          matchTime: referee?.getMatchTime?.() ?? 0,
+        });
+        spawnBallFootball();
+      }
     }
     // Perf gate: measures realised ctrlHz over a 2 s window, degrades once.
     maybeDegradePerf(performance.now());
@@ -1941,80 +2154,9 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
   }
 
   // ── Football-only audio (multi-duck) ─────────────────────────────────
-  // Sandbox stepAudioSim() is single-duck + arena walls; here we only need
-  // ball thumps and body collisions. Fall / kick one-shots fire at the
-  // state transitions above. Uses the same Kenney thump bank as the official
-  // arena assets (public/assets/sfx) — microduck_sounds is vocalisations.
-  const FB_BALL_DV = 0.5;
-  const FB_BALL_DEBOUNCE_MS = 90;
-  const FB_HIT_DIST = 0.32;       // trunk centres closer than this ≈ contact
-  const FB_HIT_REL_V = 0.22;      // m/s closing speed to count as a bump
-  const FB_HIT_DEBOUNCE_MS = 280;
-  const fbBallPrevV = [0, 0, 0];
-  let fbBallPrevValid = false;
-  let fbBallThumpAt = 0;
-  const fbHitAt = new Map(); // "i-j" -> last ms
-
+  // Kick / ball / duck-bump thumps are off — match energy comes from
+  // danmaku commentary cues. Fall thuds still fire at recovery transitions.
   function stepAudioFootball() {
-    const now = performance.now();
-    const v = data.qvel;
-    // Ball impacts (kick contact, wall bounce, duck shove).
-    if (ballActive) {
-      const b = ballDofAdr;
-      if (fbBallPrevValid) {
-        const dv = Math.hypot(
-          v[b] - fbBallPrevV[0], v[b + 1] - fbBallPrevV[1], v[b + 2] - fbBallPrevV[2]);
-        if (dv > FB_BALL_DV && now - fbBallThumpAt > FB_BALL_DEBOUNCE_MS) {
-          fbBallThumpAt = now;
-          const u = Math.min(1, (dv - FB_BALL_DV) / 3.5);
-          playSfx("thump", {
-            gain: 0.16 + 0.42 * u,
-            rate: 1.2 - 0.4 * u + Math.random() * 0.08,
-            out: ballEmitter.node,
-          });
-        }
-      }
-      fbBallPrevV[0] = v[b]; fbBallPrevV[1] = v[b + 1]; fbBallPrevV[2] = v[b + 2];
-      fbBallPrevValid = true;
-    } else {
-      fbBallPrevValid = false;
-    }
-
-    // Duck–duck collisions: pairwise distance + relative planar speed.
-    for (let i = 0; i < ducks.length; i++) {
-      const a = ducks[i];
-      if (a.penaltyTimer > 0 || a.sentOff) continue;
-      const da = a.addrs.freejointDofAdr;
-      const ax = a.pos[0], ay = a.pos[1];
-      const avx = v[da], avy = v[da + 1];
-      for (let j = i + 1; j < ducks.length; j++) {
-        const bDuck = ducks[j];
-        if (bDuck.penaltyTimer > 0 || bDuck.sentOff) continue;
-        const dx = bDuck.pos[0] - ax;
-        const dy = bDuck.pos[1] - ay;
-        const dist = Math.hypot(dx, dy);
-        if (dist > FB_HIT_DIST || dist < 1e-4) continue;
-        const db = bDuck.addrs.freejointDofAdr;
-        const rvx = v[db] - avx;
-        const rvy = v[db + 1] - avy;
-        // Closing component along the separation vector.
-        const closing = -(rvx * dx + rvy * dy) / dist;
-        if (closing < FB_HIT_REL_V) continue;
-        const key = `${i}-${j}`;
-        const last = fbHitAt.get(key) || 0;
-        if (now - last < FB_HIT_DEBOUNCE_MS) continue;
-        fbHitAt.set(key, now);
-        const sameTeam = a.team === bDuck.team;
-        const u = Math.min(1, (closing - FB_HIT_REL_V) / 0.8);
-        // Teammate bumps: softer / higher; opponent: heavier thud.
-        playSfx("thump", {
-          gain: sameTeam ? (0.1 + 0.18 * u) : (0.18 + 0.32 * u),
-          rate: sameTeam
-            ? (0.95 + 0.2 * Math.random())
-            : (0.55 + 0.15 * u + Math.random() * 0.08),
-        });
-      }
-    }
     haptics.tick();
   }
 
@@ -2026,11 +2168,36 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
     tg.position.set(q[fj], q[fj + 1], q[fj + 2]);
     tg.quaternion.set(q[fj + 4], q[fj + 5], q[fj + 6], q[fj + 3]);
     for (let j = 0; j < NUM_JOINTS; j++) setJoint(duck.rig, JOINT_NAMES[j], q[duck.addrs.qposAdr[j]]);
+    // Passive roller wheels (visual only).
+    for (const ej of duck.addrs.extraJoints || []) setJoint(duck.rig, ej.name, q[ej.adr]);
+  }
+
+  // Soft broadcast follow: ease orbit target toward the ball while holding
+  // a high camera so the pitch never disappears into a turf close-up.
+  const _broadcastTgt = new THREE.Vector3();
+  const _broadcastCam = new THREE.Vector3();
+  const BROADCAST_H = 4.2;
+  const BROADCAST_BACK = 5.2;
+  const BROADCAST_EASE = 0.045;
+  function updateBroadcastCam() {
+    const q = data.qpos;
+    const bx = Number.isFinite(q[ballQposAdr]) ? q[ballQposAdr] : 0;
+    const by = Number.isFinite(q[ballQposAdr + 1]) ? q[ballQposAdr + 1] : 0;
+    _broadcastTgt.set(bx, 0, -by);
+    controls.target.lerp(_broadcastTgt, BROADCAST_EASE);
+    // Desired cam: south of the ball at fixed height (world +Z toward cam).
+    _broadcastCam.set(controls.target.x, BROADCAST_H, controls.target.z + BROADCAST_BACK);
+    camera.position.lerp(_broadcastCam, BROADCAST_EASE);
+    // Rescue if anything (orbit drag / celebration handoff) buried the cam.
+    if (camera.position.y < 2.4) camera.position.y = BROADCAST_H;
+    camera.lookAt(controls.target);
   }
 
   // Football per-frame render drive: sync every rig, follow the ball, keep
   // the orbit camera alive, drive celebration, throttle match state to store.
   function frameFootball(dt) {
+    // Heal any FPV/RT viewport corruption before R3F paints this frame.
+    if (typeof restoreMainFramebuffer === "function") restoreMainFramebuffer();
     for (const duck of ducks) syncOneRig(duck);
     if (ball) ball.sync(data.qpos, ballQposAdr, ballActive);
     // Spatial audio: listener on camera, ball emitter for thumps.
@@ -2049,7 +2216,9 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
         controls.target.copy(override.lookAt);
       }
     } else {
-      controls.update();
+      // Broadcast cam owns framing; skip OrbitControls.update so damping
+      // can't yank the overview into the turf.
+      updateBroadcastCam();
     }
     if (ball) ball.drive(() => spawnBallFootball());
     renderTelemetry();
@@ -2075,6 +2244,7 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
       const patch = {
         matchTime: referee.getMatchTime(),
         matchState: stateNow,
+        score: referee.getScore(),
         lastTouchTeam: lastTouch,
         ducksState: duckSnap,
         ballState: { x: fin(q[ballQposAdr]), y: fin(q[ballQposAdr + 1]) },
@@ -2085,6 +2255,7 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
           stats: matchStats,
           strategyByTeam,
           score: referee.getScore(),
+          loco,
         });
       }
       setStore(patch);
@@ -2289,12 +2460,28 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
   // Registered for the module-level HMR dispose so this instance's loop is
   // stopped when the module is thrown away.
   liveControlLoops.add(() => { running = false; });
+  function readSimSpeed() {
+    const n = store().simSpeed;
+    return n === 2 || n === 3 ? n : 1;
+  }
+  function setSimSpeed(n) {
+    const s = n === 2 || n === 3 ? n : 1;
+    setStore({ simSpeed: s });
+    try { localStorage.setItem("microduck-sim-speed", String(s)); } catch { /* private */ }
+    return s;
+  }
+  function cycleSimSpeed() {
+    const cur = readSimSpeed();
+    return setSimSpeed(cur >= 3 ? 1 : cur + 1);
+  }
   (async function controlLoop() {
     let next = performance.now();
     let count = 0, hzT0 = next;
     while (running) {
-      await controlStep();
-      count++;
+      // N physics/AI steps per wall-clock CTRL_DT → Nx match speed.
+      const steps = readSimSpeed();
+      for (let i = 0; i < steps; i++) await controlStep();
+      count += steps;
       const now = performance.now();
       if (now - hzT0 > 500) {
         ctrlHz = (count * 1000) / (now - hzT0);
@@ -2383,16 +2570,157 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
     scene.add(rig.placer);
     trunkGroup = rig.bodies.get("trunk_base");
   }
-  locos.legs = {
-    model, data, rig, trunkGroup,
-    qposAdr, dofAdr, gyroAdr, trunkId, standKeyId, ballQposAdr, ballDofAdr, extraJoints,
-  };
+  locos.legs = isFootball
+    ? null // football packs live in footballPacks['legs_legs'] below
+    : {
+      model, data, rig, trunkGroup,
+      qposAdr, dofAdr, gyroAdr, trunkId, standKeyId, ballQposAdr, ballDofAdr, extraJoints,
+    };
 
   // ── Locomotion variant switching (legs <-> rollers) ──────────────────
-  // The roller stack (XML + 5 extra meshes + kinematics + 2 ONNX policies)
-  // is lazy-loaded on the first switch, then kept resident.
+  // Sandbox: single-duck lazy rollers stack (unchanged).
+  // Football: per-TEAM loco. Packs are keyed "redLoco_blueLoco" and may
+  // mix walking + roller bodies in one MJCF (3+3). Coach picks each side
+  // independently on the title card; Kick Off activates the matching pack.
+  const footballPacks = Object.create(null); // key -> { model, data, duckPacks, duckLocos, ... }
+  let legsKin = k;
+  let rollersKin = null;
+  let footballPackLoading = null;
+
+  function locoPackKey(byTeam) {
+    const r = byTeam?.red === "rollers" ? "rollers" : "legs";
+    const b = byTeam?.blue === "rollers" ? "rollers" : "legs";
+    return `${r}_${b}`;
+  }
+
+  function readLocoByTeam() {
+    const t = store().locoByTeam;
+    return {
+      red: t?.red === "rollers" ? "rollers" : "legs",
+      blue: t?.blue === "rollers" ? "rollers" : "legs",
+    };
+  }
+
+  async function ensureDrivePolicies() {
+    if (sessions.drive) return;
+    const [sDrive, sCrouch] = await Promise.all([
+      ort.InferenceSession.create(signed(POLICIES.drive), sessionOpts),
+      ort.InferenceSession.create(signed(POLICIES.crouch), sessionOpts),
+    ]);
+    sessions.drive = sDrive;
+    sessions.crouch = sCrouch;
+  }
+
+  async function buildFootballPack(byTeam) {
+    const key = locoPackKey(byTeam);
+    if (footballPacks[key]) return footballPacks[key];
+    const duckCfgs = matchConfig.ducks.map((dc) => ({
+      ...dc,
+      loco: byTeam[dc.team] === "rollers" ? "rollers" : "legs",
+    }));
+    const needsRollers = duckCfgs.some((d) => d.loco === "rollers");
+    const xmlTask = buildPhysicsXml("robot_allcollisions.xml", {
+      ...matchConfig.field,
+      ducks: duckCfgs,
+      ballPark: matchConfig.ball.parkPos,
+    });
+    const kinTask = needsRollers && !rollersKin
+      ? loadKinematics(`${MODEL_DIR}/kinematics_rollers.json`)
+      : Promise.resolve(rollersKin);
+    const [{ xml: packXml, meshFiles }, rk] = await Promise.all([xmlTask, kinTask]);
+    if (needsRollers) {
+      if (rk) rollersKin = rk;
+      await ensureDrivePolicies();
+    }
+    await addMeshesToVfs(meshFiles);
+
+    const packModel = mujoco.MjModel.from_xml_string(packXml, vfs);
+    const packData = new mujoco.MjData(packModel);
+    const wantNq = duckCfgs.reduce((n, d) => n + (d.loco === "rollers" ? 25 : 21), 7);
+    console.assert(packModel.nq === wantNq,
+      `[football] pack ${key} nq ${packModel.nq} (want ${wantNq})`);
+    console.assert(packModel.nu === ducks.length * NUM_JOINTS,
+      `[football] pack ${key} nu ${packModel.nu}`);
+
+    const [legsSrc, rollersSrc] = await Promise.all([
+      buildRig(legsKin, { materialForMesh: materialHookFor(VARIANTS.classic) }),
+      needsRollers
+        ? buildRig(rollersKin, { materialForMesh: materialHookFor(VARIANTS.classic) })
+        : Promise.resolve(null),
+    ]);
+    // First duck of each loco flavor keeps the prototype; later ones clone.
+    const taken = { legs: false, rollers: false };
+    const duckLocos = duckCfgs.map((d) => d.loco);
+    const duckPacks = duckCfgs.map((dc, i) => {
+      const locoName = dc.loco;
+      const kin = locoName === "rollers" ? rollersKin : legsKin;
+      const addrs = resolveAddrs(packModel, kin, dc.prefix);
+      addrs.ctrlOffset = i * NUM_JOINTS;
+      const src = locoName === "rollers" ? rollersSrc : legsSrc;
+      let rRig;
+      if (!taken[locoName]) {
+        taken[locoName] = true;
+        rRig = src;
+      } else {
+        rRig = cloneRig(src);
+      }
+      applyVariant(rRig, dc.team === "red" ? "team_red" : "team_blue");
+      if (dc.role === "goalkeeper") addGoalkeeperMark({ team: dc.team, role: "goalkeeper", rig: rRig });
+      return { addrs, rig: rRig, loco: locoName };
+    });
+
+    const pack = {
+      key,
+      model: packModel,
+      data: packData,
+      duckPacks,
+      duckLocos,
+      ballQposAdr: duckPacks[0].addrs.ballQposAdr,
+      ballDofAdr: duckPacks[0].addrs.ballDofAdr,
+      byTeam: { ...byTeam },
+    };
+    footballPacks[key] = pack;
+    return pack;
+  }
+
+  async function ensureFootballPack(byTeam) {
+    const key = locoPackKey(byTeam);
+    if (footballPacks[key]) return footballPacks[key];
+    // Serialize builds so overlapping coach clicks don't double-compile.
+    const run = async () => {
+      setStore({ rollersLoading: true });
+      try {
+        return await buildFootballPack(byTeam);
+      } finally {
+        setStore({ rollersLoading: false });
+      }
+    };
+    if (footballPackLoading) {
+      await footballPackLoading;
+      if (footballPacks[key]) return footballPacks[key];
+    }
+    footballPackLoading = run().finally(() => { footballPackLoading = null; });
+    return footballPackLoading;
+  }
+
+  // Register the boot legs world as the legs_legs pack (reuses live rigs/addrs).
+  if (isFootball) {
+    footballPacks["legs_legs"] = {
+      key: "legs_legs",
+      model,
+      data,
+      duckPacks: ducks.map((d) => ({ addrs: d.addrs, rig: d.rig, loco: "legs" })),
+      duckLocos: ducks.map(() => "legs"),
+      ballQposAdr: ducks[0].addrs.ballQposAdr,
+      ballDofAdr: ducks[0].addrs.ballDofAdr,
+      byTeam: { red: "legs", blue: "legs" },
+    };
+    for (const d of ducks) d.loco = "legs";
+  }
+
   let rollersLoading = null;
   function ensureRollers() {
+    // Sandbox-only lazy stack. Football uses ensureFootballPack.
     rollersLoading ??= (async () => {
       const [{ xml: rXml, meshFiles: rMeshFiles }, rk] = await Promise.all([
         buildPhysicsXml("robot_allcollisions_rollers.xml"),
@@ -2450,9 +2778,93 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
     resetSim();
   }
 
+  let activeFootballPackKey = isFootball ? "legs_legs" : null;
+
+  /** Swap the shared multi-duck model + per-duck rigs for a loco pack. */
+  function activateFootballPack(pack) {
+    if (!pack?.duckPacks || pack.key === activeFootballPackKey) {
+      // Still refresh duck.loco in case of partial state.
+      if (pack?.duckLocos) {
+        for (let i = 0; i < ducks.length; i++) ducks[i].loco = pack.duckLocos[i];
+      }
+      return;
+    }
+    celebration?.cancel();
+    const poses = ducks.map((d) => ({
+      x: Number.isFinite(d.pos[0]) ? d.pos[0] : 0,
+      y: Number.isFinite(d.pos[1]) ? d.pos[1] : 0,
+      yaw: Number.isFinite(d.yaw) ? d.yaw : 0,
+    }));
+    const q = data.qpos;
+    const ballPose = {
+      x: Number.isFinite(q[ballQposAdr]) ? q[ballQposAdr] : 0,
+      y: Number.isFinite(q[ballQposAdr + 1]) ? q[ballQposAdr + 1] : 0,
+      z: Number.isFinite(q[ballQposAdr + 2]) ? q[ballQposAdr + 2] : BALL_RADIUS,
+    };
+    for (const d of ducks) {
+      if (d.rig?.placer?.parent) scene.remove(d.rig.placer);
+      d.recovery = null;
+      d.kickRun = null;
+      d.mode = "walk";
+      d.cmd.fill(0);
+      d.cmdSm.fill(0);
+      d.lastAction.fill(0);
+    }
+    model = pack.model;
+    data = pack.data;
+    ballQposAdr = pack.ballQposAdr;
+    ballDofAdr = pack.ballDofAdr;
+    for (let i = 0; i < ducks.length; i++) {
+      const p = pack.duckPacks[i];
+      ducks[i].addrs = p.addrs;
+      ducks[i].rig = p.rig;
+      ducks[i].loco = pack.duckLocos[i];
+      applyVariant(p.rig, ducks[i].team === "red" ? "team_red" : "team_blue");
+      scene.add(p.rig.placer);
+      if (ducks[i].rig) ducks[i].rig.placer.visible = !ducks[i].sentOff;
+    }
+    ({ qposAdr, dofAdr, gyroAdr, trunkId, standKeyId, extraJoints, ankleIds } = ducks[0].addrs);
+    activeFootballPackKey = pack.key;
+    // Mirror a coarse loco flag for OSD: rollers if either side skates.
+    loco = (pack.byTeam.red === "rollers" || pack.byTeam.blue === "rollers")
+      ? "rollers" : "legs";
+    setStore({ loco, locoByTeam: { ...pack.byTeam } });
+    for (let i = 0; i < ducks.length; i++) {
+      placeDuck(ducks[i], [poses[i].x, poses[i].y, 0.12], poses[i].yaw);
+    }
+    placeBall([ballPose.x, ballPose.y, ballPose.z]);
+    prevBallX = ballPose.x;
+    prevBallY = ballPose.y;
+    cacheDuckPoses();
+  }
+
   let locoSwitching = false;
+  async function applyFootballLocoByTeam(byTeam, { force = false } = {}) {
+    if (!isFootball) return;
+    if (!force && !store().menuOpen && formationLocked) return;
+    const want = {
+      red: byTeam?.red === "rollers" ? "rollers" : "legs",
+      blue: byTeam?.blue === "rollers" ? "rollers" : "legs",
+    };
+    const key = locoPackKey(want);
+    if (key === activeFootballPackKey && !locoSwitching) return;
+    locoSwitching = true;
+    setStore({ locoSwitching: true, locoByTeam: want });
+    try {
+      const pack = await ensureFootballPack(want);
+      activateFootballPack(pack);
+    } catch (e) {
+      console.error("[football] team loco apply failed", e);
+    } finally {
+      setStore({ locoSwitching: false });
+      locoSwitching = false;
+    }
+  }
+
   async function setLoco(name, { force = false } = {}) {
     if (name !== "legs" && name !== "rollers") return;
+    // Football uses per-team loco — ignore global setLoco except sandbox.
+    if (isFootball) return;
     if (loco === name || locoSwitching) return;
     if (!force && (inputLocked || rollRun || kickRun || crouchRun || pickRun ||
         standTimer || recovery)) return;
@@ -2474,16 +2886,16 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
   }
 
   async function toggleLoco() {
+    if (isFootball) return; // match loco is coach-card only (per team)
     const next = loco === "legs" ? "rollers" : "legs";
     setStore({ locoWant: next });
     await setLoco(next);
   }
 
-  // Quickbar loco intent: reconcile locoWant -> actual, retrying until the
-  // game allows the switch (mid-roll, respawn ceremony, ...). Replaces the
-  // old index.html reconciler that polled window.rl.
+  // Quickbar loco intent (sandbox only).
   let locoReconciler = null;
   function reconcileLoco() {
+    if (isFootball) return;
     const want = store().locoWant;
     if (want === loco) {
       if (locoReconciler) { clearInterval(locoReconciler); locoReconciler = null; }
@@ -2584,11 +2996,19 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
   controls.maxPolarAngle = Math.PI / 2 - 0.03;
   if (isFootball) {
     // ── Football mode: broadcast framing ──
-    // Orbit the pitch centre instead of the single spawn cell, and lift the
-    // distance cap so the whole field stays visible (FootballCanvas parks
-    // the camera ~6.4 units out; the sandbox cap of 3 would yank it in).
+    // Keep a high overview of the 6×4 m pitch. Sandbox minDistance (0.25)
+    // let trackpad zoom bury the camera in the turf so the main view went
+    // black while FPV PiPs still showed the markings.
     controls.target.set(0, 0, 0);
+    controls.minDistance = 3.8;
     controls.maxDistance = 12;
+    controls.maxPolarAngle = Math.PI * 0.42; // ~76° from zenith — always look down
+    controls.minPolarAngle = 0.18;
+    controls.enableZoom = false;
+    controls.enablePan = false;
+    camera.position.set(0, 4.2, 5.2);
+    camera.lookAt(0, 0, 0);
+    controls.update();
   }
 
   // Chase cam (default ON): each frame the camera eases toward a point
@@ -3311,8 +3731,8 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
   let fpvSlots = null; // { red: HTMLCanvasElement, blue: HTMLCanvasElement }
   const FPV_RT_W = 320;
   const FPV_RT_H = 200;
-  const fpvCamRed = new THREE.PerspectiveCamera(68, FPV_RT_W / FPV_RT_H, 0.03, 24);
-  const fpvCamBlue = new THREE.PerspectiveCamera(68, FPV_RT_W / FPV_RT_H, 0.03, 24);
+  const fpvCamRed = new THREE.PerspectiveCamera(78, FPV_RT_W / FPV_RT_H, 0.04, 24);
+  const fpvCamBlue = new THREE.PerspectiveCamera(78, FPV_RT_W / FPV_RT_H, 0.04, 24);
   const fpvRt = new THREE.WebGLRenderTarget(FPV_RT_W, FPV_RT_H, {
     type: THREE.UnsignedByteType,
     format: THREE.RGBAFormat,
@@ -3323,9 +3743,10 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
   const fpvFlipBuf = new Uint8ClampedArray(FPV_RT_W * FPV_RT_H * 4);
   const _fpvEye = new THREE.Vector3();
   const _fpvLook = new THREE.Vector3();
-  const FPV_EYE_H = 0.16;
-  const FPV_LOOK_AHEAD = 1.35;
-  const FPV_LOOK_DOWN = 0.08;
+  const _fpvBall = new THREE.Vector3();
+  const FPV_LOOK_AHEAD = 1.6;
+  const FPV_LOOK_DOWN = 0.02;
+  const FPV_FWD_BIAS = 0.07;   // sit in front of the skull so we don't clip self
   let fpvAcc = 0;
   const FPV_PERIOD = 1 / 18; // ~18 Hz is enough for PiP
 
@@ -3363,20 +3784,47 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
     return ducks.find((d) => d.id === id) || null;
   }
 
+  /**
+   * True eye-cam from the chaser head: mostly follow body yaw, with a light
+   * ball bias. Heavy look-at-ball + FOV crush made both PiPs look like the
+   * same ground-stare "ball cam" (opponent cropped, own legs in frame).
+   */
   function placeFpvCam(cam, duck) {
     if (!duck?.rig) return false;
-    const trunk = duck.rig.bodies.get("trunk_base");
-    if (!trunk) return false;
-    trunk.updateWorldMatrix(true, false);
-    trunk.getWorldPosition(_fpvEye);
-    _fpvEye.y += FPV_EYE_H;
+    const head = duck.rig.bodies.get("jaw_soft")
+      || duck.rig.bodies.get("trunk_base");
+    if (!head) return false;
+    // Parents must be current — football sync writes local trunk poses only.
+    duck.rig.placer.updateWorldMatrix(true, true);
+    head.getWorldPosition(_fpvEye);
     const yaw = Number.isFinite(duck.yaw) ? duck.yaw : 0;
-    // MJCF forward (cos,sin,0) → three (cos, 0, -sin)
+    // Forward in three.js XZ (MJCF yaw → cos on X, −sin on Z).
+    const fx = Math.cos(yaw);
+    const fz = -Math.sin(yaw);
+    _fpvEye.x += fx * FPV_FWD_BIAS;
+    _fpvEye.y += 0.02;
+    _fpvEye.z += fz * FPV_FWD_BIAS;
+    // Heading look — keep the horizon / opponents in frame.
     _fpvLook.set(
-      _fpvEye.x + Math.cos(yaw) * FPV_LOOK_AHEAD,
+      _fpvEye.x + fx * FPV_LOOK_AHEAD,
       _fpvEye.y - FPV_LOOK_DOWN,
-      _fpvEye.z - Math.sin(yaw) * FPV_LOOK_AHEAD,
+      _fpvEye.z + fz * FPV_LOOK_AHEAD,
     );
+    const q = data.qpos;
+    const bx = Number.isFinite(q[ballQposAdr]) ? q[ballQposAdr] : 0;
+    const by = Number.isFinite(q[ballQposAdr + 1]) ? q[ballQposAdr + 1] : 0;
+    const bz = Number.isFinite(q[ballQposAdr + 2]) ? q[ballQposAdr + 2] : 0.05;
+    // Aim slightly above the ball so look-at doesn't pitch into the turf.
+    _fpvBall.set(bx, Math.max(bz, 0.05) + 0.14, -by);
+    const dx = bx - (Number.isFinite(duck.pos[0]) ? duck.pos[0] : 0);
+    const dy = by - (Number.isFinite(duck.pos[1]) ? duck.pos[1] : 0);
+    const bd = Math.hypot(dx, dy);
+    const track = Math.max(0, Math.min(1, 1 - bd / 2.4));
+    // Cap ball pull — heading stays dominant even at feet.
+    _fpvLook.lerp(_fpvBall, 0.1 + 0.32 * track);
+    cam.fov = 82 - 8 * track;
+    cam.near = 0.05;
+    cam.updateProjectionMatrix();
     cam.position.copy(_fpvEye);
     cam.up.set(0, 1, 0);
     cam.lookAt(_fpvLook);
@@ -3400,6 +3848,19 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
     ctx.putImageData(new ImageData(fpvFlipBuf, FPV_RT_W, FPV_RT_H), 0, 0);
   }
 
+  // Three.setViewport takes CSS pixels and multiplies by DPR. getViewport
+  // returns the *drawing-buffer* rect — feeding that back into setViewport
+  // double-scales and leaves the main canvas painting into a tiny corner
+  // (rest of the screen stays clear-color black while FPV RTs still work).
+  const _fpvSize = new THREE.Vector2();
+  function restoreMainFramebuffer() {
+    renderer.setRenderTarget(null);
+    renderer.getSize(_fpvSize);
+    renderer.setViewport(0, 0, _fpvSize.x, _fpvSize.y);
+    renderer.setScissor(0, 0, _fpvSize.x, _fpvSize.y);
+    renderer.setScissorTest(false);
+  }
+
   function renderOneFpv(team, cam, canvas) {
     if (!canvas) return;
     const duck = pickTeamChaser(team);
@@ -3411,19 +3872,23 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
       }
       return;
     }
+    // Hide the whole chaser rig so the eye-cam never sees its own mesh.
     const hid = duck?.rig?.placer;
     const wasVis = hid ? hid.visible : true;
     if (hid) hid.visible = false;
-    const prev = renderer.getRenderTarget();
     const prevColor = new THREE.Color();
     renderer.getClearColor(prevColor);
     const prevAlpha = renderer.getClearAlpha();
+    const prevAutoClear = renderer.autoClear;
+    renderer.autoClear = true;
     renderer.setClearColor(0x08080c, 1);
+    // setRenderTarget(RT) sets the GL viewport to the RT; do NOT call
+    // setViewport(320,200) here — that overwrites Three's CSS _viewport.
     renderer.setRenderTarget(fpvRt);
     renderer.clear();
     renderer.render(scene, cam);
-    renderer.setRenderTarget(prev);
     renderer.setClearColor(prevColor, prevAlpha);
+    renderer.autoClear = prevAutoClear;
     if (hid) hid.visible = wasVis;
     blitRtToCanvas(canvas);
   }
@@ -3439,8 +3904,19 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
     const blue = fpvSlots.blue
       || document.querySelector("canvas[data-fpv='blue']");
     if (!red && !blue) return;
-    renderOneFpv("red", fpvCamRed, red);
-    renderOneFpv("blue", fpvCamBlue, blue);
+    try {
+      // Never blit the same canvas twice if refs somehow alias.
+      if (red && blue && red === blue) {
+        renderOneFpv("red", fpvCamRed, red);
+      } else {
+        if (red) renderOneFpv("red", fpvCamRed, red);
+        if (blue) renderOneFpv("blue", fpvCamBlue, blue);
+      }
+    } finally {
+      // Always put the default framebuffer + full CSS viewport back so the
+      // next R3F main pass fills the window (not a 320×200 corner).
+      restoreMainFramebuffer();
+    }
   }
 
   function syncButtons() {
@@ -3472,8 +3948,27 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
     },
     requestLoco: (name) => {
       if (name !== "legs" && name !== "rollers") return;
+      if (isFootball) {
+        const userTeam = store().userTeam || "red";
+        const next = { ...readLocoByTeam(), [userTeam]: name };
+        setStore({ locoByTeam: next });
+        applyFootballLocoByTeam(next).catch((e) => {
+          console.error("[football] requestLoco failed", e);
+        });
+        return;
+      }
       setStore({ locoWant: name });
       reconcileLoco();
+    },
+    setTeamLoco: (team, name) => {
+      if (!isFootball) return;
+      if (team !== "red" && team !== "blue") return;
+      if (name !== "legs" && name !== "rollers") return;
+      const next = { ...readLocoByTeam(), [team]: name };
+      setStore({ locoByTeam: next });
+      applyFootballLocoByTeam(next).catch((e) => {
+        console.error("[football] setTeamLoco failed", e);
+      });
     },
     resetSim,
     spawnBall: () => spawnBall(),
@@ -3483,10 +3978,18 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
     setUserTeam: (team) => setUserTeam(team),
     setFpvSlots,
     renderTeamFpv,
+    setSimSpeed,
+    cycleSimSpeed,
+    getSimSpeed: readSimSpeed,
     getStrategy: () => ({
       userTeam: store().userTeam,
       userStrategy: store().userStrategy,
+      opponentStrategy: store().opponentStrategy,
       strategyByTeam: { ...strategyByTeam },
+      fingerprints: {
+        red: strategyFingerprint(strategyByTeam.red),
+        blue: strategyFingerprint(strategyByTeam.blue),
+      },
       formationLocked,
       activeSpawns: activeSpawns.map((s) => ({ ...s })),
     }),
@@ -3590,8 +4093,14 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
       aiDivider: () => aiDivider,
       config: matchConfig,
       // Top-level match control (called by FootballTitle "Kick Off" button)
-      startMatch: () => {
+      startMatch: async () => {
         celebration?.cancel();
+        // Apply per-team loco packs (walk / rollers / mixed) before the whistle.
+        try {
+          await applyFootballLocoByTeam(readLocoByTeam(), { force: true });
+        } catch (e) {
+          console.error("[football] loco apply failed", e);
+        }
         // Fresh match: clear discipline carried over from a previous game so
         // sent-off / sin-binned ducks (and their charcoal skin) don't persist
         // into the restart. The referee's kickoff event then runs executeKickoff,
@@ -3602,15 +4111,26 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
           duck.cards.yellow = 0;
           duck.cards.red = 0;
         }
-        // Sync coach choices, then lock formation for the rest of the match.
+        // Sync coach choices (both cards), then lock formation for the match.
         strategyByTeam = strategiesForUser(
           store().userTeam || "red",
           store().userStrategy || DEFAULT_STRATEGY,
+          store().opponentStrategy || DEFAULT_STRATEGY,
         );
         applyFormationFromStrategies();
         formationLocked = true;
         matchStats?.reset();
         setStore({ tacticsCard: null, tacticsBoard: null, matchResult: null });
+        const locoSnap = readLocoByTeam();
+        matchLog?.startMatch({
+          locoByTeam: locoSnap,
+          userTeam: store().userTeam || "red",
+          strategyFingerprint: {
+            red: strategyFingerprint(strategyByTeam.red),
+            blue: strategyFingerprint(strategyByTeam.blue),
+          },
+          simSpeed: store().simSpeed,
+        });
         if (referee) referee.startMatch();
         else { cacheDuckPoses(); spawnBallFootball(); }
       },
@@ -3622,6 +4142,14 @@ async function boot({ scene, camera, renderer, matchConfig: cfg }) {
         getSetPiece: () => referee.getSetPiece(),
         getCards: () => referee.getCards(),
         startMatch: () => referee.startMatch(),
+      } : null,
+      matchLog: matchLog ? {
+        list: () => matchLog.list(),
+        get: (id) => matchLog.get(id),
+        download: (id) => matchLog.download(id),
+        flush: () => matchLog.flush("manual"),
+        clear: () => matchLog.clear(),
+        current: () => matchLog.current(),
       } : null,
       celebration: celebration ? {
         isActive: () => celebration.isActive(),

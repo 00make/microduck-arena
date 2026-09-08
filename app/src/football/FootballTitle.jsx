@@ -85,6 +85,8 @@ export default function FootballTitle({ onKickOff }) {
   const touchMode = useGame((s) => s.touchMode);
   const entered = useGame((s) => s.entered);
   const locale = useGame((s) => s.locale) || "en";
+  const rollersLoading = useGame((s) => s.rollersLoading);
+  const locoSwitching = useGame((s) => s.locoSwitching);
   const [closing, setClosing] = useState(false);
   const prevOpen = useRef(menuOpen);
   // Latches once the kickoff has fired, so a pause reopen reads "Resume"
@@ -137,9 +139,10 @@ export default function FootballTitle({ onKickOff }) {
   }, [brandReady]);
 
   // No MenuDuck stage here: the live pitch (six ducks, already playing)
-  // is the character select - it renders behind this overlay and takes
-  // over the moment the gate drops.
-  const ready = fontsReady && brandReady && (bootDone || bootFailed);
+  // Hold Kick Off while a loco pack is still compiling.
+  const locoBusy = !!(rollersLoading || locoSwitching);
+  const ready = fontsReady && brandReady && (bootDone || bootFailed) && !locoBusy;
+
 
   // Keep the overlay mounted through the 0.35 s closing fade.
   useEffect(() => {
@@ -470,6 +473,7 @@ export default function FootballTitle({ onKickOff }) {
             size="medium"
             onDark
             data-cta="1"
+            disabled={!ready}
             onClick={kickoff}
           >
             {/* Pad prompt: ink circle with the A face button, mirroring

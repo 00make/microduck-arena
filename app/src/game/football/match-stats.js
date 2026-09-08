@@ -122,8 +122,9 @@ export function createMatchStats() {
  * @param {{ snapshot: Function }} args.stats
  * @param {object} [args.strategyByTeam]
  * @param {{ red: number, blue: number }} [args.score]
+ * @param {'legs'|'rollers'} [args.loco] — sibling rating axis to strategy
  */
-export function buildMatchReport({ stats, strategyByTeam = {}, score = null }) {
+export function buildMatchReport({ stats, strategyByTeam = {}, score = null, loco = 'legs' }) {
   const snap = stats?.snapshot ? stats.snapshot() : {
     possession: { red: 0, blue: 0, redPct: 0.5 },
     shots: { red: 0, blue: 0 },
@@ -131,10 +132,12 @@ export function buildMatchReport({ stats, strategyByTeam = {}, score = null }) {
   return {
     possession: snap.possession,
     shots: snap.shots,
+    // Orthogonal axes — never fold loco into strategy fingerprints.
     strategy: {
       red: normalizeStrategy(strategyByTeam.red || DEFAULT_STRATEGY),
       blue: normalizeStrategy(strategyByTeam.blue || DEFAULT_STRATEGY),
     },
+    loco: loco === 'rollers' ? 'rollers' : 'legs',
     score: score ? { red: score.red | 0, blue: score.blue | 0 } : null,
   };
 }
