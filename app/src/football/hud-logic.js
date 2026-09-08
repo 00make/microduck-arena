@@ -37,6 +37,7 @@ export function stateLabel(matchState, locale = "en") {
 
 const EVENT_ICONS = {
   goal: "\u26BD",
+  shot: "\uD83D\uDCA5",
   yellow_card: "\uD83D\uDFE8",
   red_card: "\uD83D\uDFE5",
   corner: "\uD83D\uDCD0",
@@ -47,6 +48,9 @@ const EVENT_ICONS = {
   kickoff: "\uD83C\uDFC1",
   halftime: "\u23F1\uFE0F",
   fulltime: "\uD83C\uDFC6",
+  extra_time: "\u23F1\uFE0F",
+  throw_in: "\uD83E\uDD3E",
+  goal_kick: "\uD83D\uDD04",
 };
 
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -65,6 +69,7 @@ export function eventLabel(ev, locale = "en") {
   const team = teamToken(ev, locale);
   switch (ev.type) {
     case "goal": return `${icon} ${t(locale, "ev_goal", { team })}`;
+    case "shot": return `${icon} ${t(locale, "ev_shot", { team })}`;
     case "yellow_card": return `${icon} ${t(locale, "ev_yellow", { team })}`;
     case "red_card": return `${icon} ${t(locale, "ev_red", { team })}`;
     case "corner":
@@ -75,6 +80,9 @@ export function eventLabel(ev, locale = "en") {
     case "kickoff": return `${icon} ${t(locale, "ev_kickoff")}`;
     case "halftime": return `${icon} ${t(locale, "ev_halftime")}`;
     case "fulltime": return `${icon} ${t(locale, "ev_fulltime")}`;
+    case "extra_time": return `${icon} ${t(locale, "ev_extra")}`;
+    case "throw_in": return `${icon} ${t(locale, "ev_throw", { team })}`;
+    case "goal_kick": return `${icon} ${t(locale, "ev_goalkick", { team })}`;
     default: return `${icon}${team} ${String(ev.type).replace(/_/g, " ")}`;
   }
 }

@@ -1,5 +1,7 @@
 // Football UI strings — EN / 中文. No i18n framework; locale lives on the store.
 
+import { describeStrategy } from "../game/football/strategy.js";
+
 export const LOCALES = ["en", "zh"];
 
 const STRINGS = {
@@ -21,6 +23,16 @@ const STRINGS = {
     formation: "Formation",
     style: "Style",
     press: "Press",
+    fineTune: "Fine tune",
+    fineTuneHide: "Hide fine tune",
+    fineTuneShow: "Show fine tune",
+    hintPlaceholder: "e.g. high press, don't blast, keeper home",
+    hintApply: "Apply",
+    hintPreview: "Will change",
+    hintEmpty: "No tactics matched — try other words",
+    rivalTactics: "Rival tactics",
+    editingSide: "Editing",
+    custom: "Custom",
     red: "Red",
     blue: "Blue",
     attack: "Attack",
@@ -32,7 +44,18 @@ const STRINGS = {
     pressWord: "press",
     formationLocked: "formation locked",
     teamTactics: "Team tactics",
+    knob_lineHeight: "Line",
+    knob_press: "Press",
+    knob_shootGreed: "Shoot",
+    knob_supportWidth: "Width",
+    knob_supportDepth: "Depth",
+    knob_approach: "Approach",
+    knob_clearStyle: "Clear",
+    knob_gkRush: "GK",
+    knob_spacing: "Spacing",
     back: "Back",
+    danmakuOn: "CHAT",
+    danmakuOff: "CHAT OFF",
     sinBin: "SIN-BIN",
     openCoach: "Open coach desk",
     langEn: "EN",
@@ -57,6 +80,7 @@ const STRINGS = {
     state_FULLTIME: "FULL TIME",
     // Events
     ev_goal: "GOAL!{team} Team scores!",
+    ev_shot: "Shot —{team}",
     ev_yellow: "Yellow card —{team}",
     ev_red: "Red card —{team}",
     ev_corner: "Corner kick —{team}",
@@ -65,6 +89,9 @@ const STRINGS = {
     ev_kickoff: "Kick off!",
     ev_halftime: "Half time",
     ev_fulltime: "Full time",
+    ev_extra: "Extra time!",
+    ev_throw: "Throw-in —{team}",
+    ev_goalkick: "Goal kick —{team}",
   },
   zh: {
     loadingTeams: "正在加载队伍…",
@@ -83,6 +110,16 @@ const STRINGS = {
     formation: "阵型",
     style: "风格",
     press: "压迫",
+    fineTune: "细调",
+    fineTuneHide: "收起细调",
+    fineTuneShow: "展开细调",
+    hintPlaceholder: "例如：高位逼抢，别乱射，门将别出门",
+    hintApply: "应用",
+    hintPreview: "将修改",
+    hintEmpty: "没有匹配到战术词 — 换个说法试试",
+    rivalTactics: "对方战术",
+    editingSide: "正在编辑",
+    custom: "自定义",
     red: "红队",
     blue: "蓝队",
     attack: "进攻",
@@ -94,7 +131,18 @@ const STRINGS = {
     pressWord: "压迫",
     formationLocked: "阵型已锁定",
     teamTactics: "球队战术",
+    knob_lineHeight: "站位线",
+    knob_press: "逼抢",
+    knob_shootGreed: "射门",
+    knob_supportWidth: "宽度",
+    knob_supportDepth: "前插",
+    knob_approach: "接近",
+    knob_clearStyle: "解围",
+    knob_gkRush: "门将",
+    knob_spacing: "间距",
     back: "返回",
+    danmakuOn: "弹幕",
+    danmakuOff: "弹幕关",
     sinBin: "暂罚",
     openCoach: "打开教练席",
     langEn: "EN",
@@ -116,6 +164,7 @@ const STRINGS = {
     state_HALFTIME: "中场",
     state_FULLTIME: "全场结束",
     ev_goal: "进球！{team}得分",
+    ev_shot: "射门 —{team}",
     ev_yellow: "黄牌 —{team}",
     ev_red: "红牌 —{team}",
     ev_corner: "角球 —{team}",
@@ -124,6 +173,9 @@ const STRINGS = {
     ev_kickoff: "开球！",
     ev_halftime: "半场",
     ev_fulltime: "全场结束",
+    ev_extra: "加时！",
+    ev_throw: "界外球 —{team}",
+    ev_goalkick: "球门球 —{team}",
   },
 };
 
@@ -180,10 +232,12 @@ export function teamLabel(locale, id) {
   return t(locale, id);
 }
 
-/** Short coach tag: "Attack · High" / "进攻 · 高" */
+/** Short coach tag: style preset or top differing knobs. */
 export function strategyTag(locale, strategy) {
   if (!strategy) return "—";
-  const style = styleLabel(locale, strategy.style);
-  const press = pressLabel(locale, strategy.press);
-  return `${style} · ${press}`;
+  const d = describeStrategy(strategy, locale);
+  if (d.style && d.style !== "custom") {
+    return `${styleLabel(locale, d.style)} · ${pressLabel(locale, d.press)}`;
+  }
+  return d.summary || "—";
 }

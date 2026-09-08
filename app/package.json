@@ -11,6 +11,7 @@
     "dev": "vite",
     "test": "node --test \"test/**/*.test.js\"",
     "test:headless": "node tools/headless-match.mjs",
+    "test:env": "node tools/football-env-smoke.mjs --steps=20",
     "build": "vite build",
     "preview": "vite preview"
   },

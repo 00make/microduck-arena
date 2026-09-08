@@ -47,10 +47,47 @@ export const useGame = create(
     ducksState: [], // [{id, team, role, x, y, yaw, fallen, penalized, sentOff}] — 4Hz
     ballState: null, // { x, y } — 4Hz, for top pitch radar
 
-    // Coach panel: user picks a side and tactics; opponent keeps defaults.
+    // Coach panel: user + rival strategy cards (v2 continuous knobs).
     userTeam: "red", // "red" | "blue"
-    userStrategy: { formation: "2f1gk", style: "balanced", press: "medium" },
+    userStrategy: {
+      version: 2,
+      formation: "2f1gk",
+      style: "balanced",
+      press: "medium",
+      knobs: {
+        lineHeight: 0.5,
+        press: 0.5,
+        shootGreed: 0.5,
+        supportWidth: 0.5,
+        supportDepth: 0.5,
+        approach: 0.5,
+        clearStyle: 0.5,
+        gkRush: 0.5,
+        spacing: 0.5,
+      },
+    },
+    opponentStrategy: {
+      version: 2,
+      formation: "2f1gk",
+      style: "balanced",
+      press: "medium",
+      knobs: {
+        lineHeight: 0.5,
+        press: 0.5,
+        shootGreed: 0.5,
+        supportWidth: 0.5,
+        supportDepth: 0.5,
+        approach: 0.5,
+        clearStyle: 0.5,
+        gkRush: 0.5,
+        spacing: 0.5,
+      },
+    },
     locale: "en", // "en" | "zh" — set from detectLocale on football mount
+    // Commentary danmaku overlay (persisted via FootballHud toggle)
+    danmakuEnabled: (() => {
+      try { return localStorage.getItem("microduck-danmaku") !== "0"; } catch { return true; }
+    })(),
     // Live dual-team match report (4 Hz) — possession + shots + strategy tags
     tacticsBoard: null,
     // Frozen fulltime tactics card (same shape as tacticsBoard)

@@ -101,7 +101,7 @@ describe('buildMatchReport', () => {
     assert.equal(report.strategy.red.style, 'attack');
     assert.equal(report.strategy.red.press, 'high');
     assert.equal(report.strategy.blue.style, 'defend');
-    assert.equal(report.strategy.blue.press, 'medium');
+    assert.equal(report.strategy.blue.press, 'low'); // defend preset knobs.press
     assert.equal(report.shots.red, 1);
     assert.equal(report.score.red, 2);
     assert.ok(report.possession.redPct > 0.7);

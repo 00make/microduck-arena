@@ -3,14 +3,14 @@
 // palette, zero-radius panel plates with cream keyline frames).
 import Box from "@mui/material/Box";
 import { keyframes } from "@mui/material/styles";
-import { useState } from "react";
 import { useGame } from "../store.js";
-import { uiClick, isMuted, setMuted } from "../game/audio.js";
+import { uiClick } from "../game/audio.js";
 import { ORANGE, MONO } from "../theme.js";
 import { ANTON, COMIC_INK, CREAM, COMIC_ORANGE } from "../ui/comic.jsx";
 import { GitHubLink } from "../ui/GitHubLink.jsx";
 import { formatClock, stateLabel, eventLabel, recentEvents } from "./hud-logic.js";
 import { t, teamLabel, strategyTag } from "./i18n.js";
+import CommentaryDanmaku from "./CommentaryDanmaku.jsx";
 import StrategyBoard from "./StrategyBoard.jsx";
 import TeamFpv from "./TeamFpv.jsx";
 
@@ -153,13 +153,14 @@ function BackButton() {
           <BackArrowIcon /> {t(locale, "back")}
         </Box>
       </Box>
-      <SoundMuteButton />
+      <DanmakuToggleButton />
     </Box>
   );
 }
 
-function SoundMuteButton() {
-  const [muted, setMutedState] = useState(isMuted);
+function DanmakuToggleButton() {
+  const locale = useGame((s) => s.locale) || "en";
+  const enabled = useGame((s) => s.danmakuEnabled !== false);
   return (
     <Box
       sx={{
@@ -172,19 +173,19 @@ function SoundMuteButton() {
       <Box
         component="button"
         type="button"
-        aria-label={muted ? "Unmute" : "Mute"}
-        aria-pressed={muted}
+        aria-label={enabled ? t(locale, "danmakuOff") : t(locale, "danmakuOn")}
+        aria-pressed={enabled}
         onClick={() => {
-          const next = !muted;
-          setMuted(next);
-          setMutedState(next);
-          if (!next) uiClick();
+          const next = !enabled;
+          useGame.setState({ danmakuEnabled: next });
+          try { localStorage.setItem("microduck-danmaku", next ? "1" : "0"); } catch { /* private mode */ }
+          uiClick();
         }}
         sx={{
           appearance: "none",
           border: "none",
           background: "transparent",
-          color: muted ? "rgba(250,248,242,0.45)" : CREAM,
+          color: enabled ? CREAM : "rgba(250,248,242,0.45)",
           cursor: "pointer",
           fontFamily: MONO,
           fontSize: "0.65rem",
@@ -194,7 +195,7 @@ function SoundMuteButton() {
           "&:hover": { color: ORANGE },
         }}
       >
-        {muted ? "MUTED" : "SFX"}
+        {enabled ? t(locale, "danmakuOn") : t(locale, "danmakuOff")}
       </Box>
     </Box>
   );
@@ -610,6 +611,7 @@ export default function FootballHud() {
         }}
       />
       <MatchResultBanner />
+      <CommentaryDanmaku />
       <EventTicker />
       <PenaltyIndicator />
       <StrategyBoard />

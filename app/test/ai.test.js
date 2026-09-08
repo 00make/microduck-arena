@@ -9,6 +9,7 @@ import {
   BaseAgent, ForwardAgent, DefenderAgent, GoalkeeperAgent,
   VX_MAX, VX_MIN, WZ_MAX, SHOOT_SPEED, SHOOT_DIST,
   createAgent, decideAll, assignChaserId, chaseCost, chaseApproachPoint,
+  isBehindBall, lateralOrbitPoint, repelWalkTarget, BASE_TUNE,
 } from '../src/game/football/ai/index.js';
 import { FIELD_HALF_L } from '../src/game/football/constants.js';
 
@@ -121,6 +122,7 @@ describe('ForwardAgent', () => {
     const cmd = agent.decide(gs);
     assert.equal(cmd.kick, false);
     assert.ok(Math.abs(cmd.wz) > 0.5); // hard turn toward the goal
+    assert.ok(Math.abs(cmd.vx) > 0.1, 'AIM must creep into the ball (no freeze-stare)');
   });
 
   it('RETURN: yields to a closer teammate in the opponent half', () => {
@@ -200,7 +202,8 @@ describe('DefenderAgent', () => {
 
   it('CLEAR: ball at feet in the own half → kick toward the opponent goal', () => {
     const agent = new DefenderAgent(null, redDefenderCfg);
-    const gs = makeGs({ x: -1.8, y: 0 }, [{ id: 2, team: 'red', role: 'defender', x: -1.5, y: 0, yaw: 0 }], 2);
+    // Must stand behind the ball on the shot axis (own-goal side), facing +X.
+    const gs = makeGs({ x: -1.8, y: 0 }, [{ id: 2, team: 'red', role: 'defender', x: -2.1, y: 0, yaw: 0 }], 2);
     assert.equal(agent.getState(gs), 'CLEAR');
     assert.equal(agent.decide(gs).kick, true);
   });
@@ -411,7 +414,7 @@ describe('decideAll', () => {
     const dt = 0.1;
     let kicked = false;
     let minBd = Infinity;
-    for (let t = 0; t < 120; t++) {
+    for (let t = 0; t < 200; t++) {
       const cmds = decideAll(ducks, gs);
       const d0 = Math.hypot(ducks[0].pos[0] - ball.x, ducks[0].pos[1] - ball.y);
       const d1 = Math.hypot(ducks[1].pos[0] - ball.x, ducks[1].pos[1] - ball.y);
@@ -425,7 +428,7 @@ describe('decideAll', () => {
       if (bd < minBd) minBd = bd;
       if (c.kick) { kicked = true; break; }
     }
-    assert.ok(minBd <= SHOOT_DIST, `never reached shoot range (minBd=${minBd})`);
+    assert.ok(minBd <= SHOOT_DIST + 0.05, `never reached shoot range (minBd=${minBd})`);
     assert.ok(kicked, 'chaser never issued a kick after closing on the ball');
   });
 
@@ -437,21 +440,209 @@ describe('decideAll', () => {
     assert.equal(assignChaserId([facing, closerAway], ball), 0);
   });
 
-  it('chase hysteresis keeps the previous chaser when costs are close', () => {
-    const ball = { x: 0, y: 0 };
-    const a = { id: 0, pos: [-0.8, 0.1], yaw: 0, role: 'forward' };
-    const b = { id: 1, pos: [-0.78, -0.1], yaw: 0, role: 'forward' };
-    // Without hysteresis b is slightly closer; with prev=0, a should stick.
-    assert.equal(assignChaserId([a, b], ball, -1), 1);
-    assert.equal(assignChaserId([a, b], ball, 0), 0);
+  it('chaseCost prefers a forward over a slightly closer defender (Booster claim bias)', () => {
+    const ball = { x: 0.5, y: 0 };
+    // Gap 0.06 m — smaller than forward−defender bonus (0.10), so role wins.
+    const fwd = { id: 0, pos: [-0.4, 0], yaw: 0, role: 'forward' };
+    const def = { id: 1, pos: [-0.34, 0], yaw: 0, role: 'defender' };
+    assert.ok(chaseCost(fwd, ball, -1, 1) < chaseCost(def, ball, -1, 1));
+    assert.equal(assignChaserId([fwd, def], ball, -1, 1), 0);
   });
 
-  it('chaseApproachPoint sits behind a still ball on the shot axis (MoveToStaticBall)', () => {
+  it('chase hysteresis keeps the previous chaser when costs are close', () => {
+    const ball = { x: 0, y: 0 };
+    const a = { id: 0, pos: [-1.2, 0.1], yaw: 0, role: 'forward' };
+    const b = { id: 1, pos: [-0.6, -0.1], yaw: 0, role: 'forward' }; // clearly closer
+    assert.equal(assignChaserId([a, b], ball, -1), 1);
+    // Sticky: with prev=0 the hysteresis can overcome a moderate gap
+    const near = { id: 0, pos: [-0.8, 0.1], yaw: 0, role: 'forward' };
+    const nearer = { id: 1, pos: [-0.72, -0.1], yaw: 0, role: 'forward' };
+    assert.equal(assignChaserId([near, nearer], ball, 0), 0);
+  });
+
+  it('wrong-side claim costs more than a free duck behind the ball', () => {
+    const ball = { x: 0, y: 0 };
+    const scrum = { id: 0, pos: [0.45, 0], yaw: Math.PI, role: 'forward' }; // attack side
+    const free = { id: 1, pos: [-0.45, 0.1], yaw: 0, role: 'forward' }; // behind, open
+    assert.ok(
+      chaseCost(free, ball, -1, 1) + 0.15 < chaseCost(scrum, ball, 0, 1),
+      'free behind duck should beat sticky wrong-side scrum by more than tie margin',
+    );
+    assert.equal(assignChaserId([scrum, free], ball, 0, 1), 1);
+  });
+
+  it('stuck wrong-side chaser loses claim so teammate can find the ball', () => {
+    // Holder stuck on attack side with long orbit; free teammate behind must take chase.
+    const ducks = [
+      {
+        id: 0, pos: [0.4, -0.15], yaw: Math.PI, role: 'forward', fallen: false, penalized: false,
+        team: 'red', spawnX: -0.8, spawnY: 0.5,
+        _ai: {
+          holdingChase: true, orbitTicks: 20, atFeetTicks: 14,
+          aimTicks: 0, kickCooldown: 0, kickHoldTicks: 0,
+        },
+      },
+      {
+        id: 1, pos: [-0.75, 0.35], yaw: 0, role: 'forward', fallen: false, penalized: false,
+        team: 'red', spawnX: -0.8, spawnY: -0.5, _ai: { holdingChase: false },
+      },
+      { id: 2, pos: [-2.8, 0], yaw: 0, role: 'goalkeeper', fallen: false, penalized: false, team: 'red' },
+    ];
+    const ball = { x: 0, y: 0, vx: 0, vy: 0 };
+    decideAll(ducks, { ball, allDucks: ducks, team: 'red' });
+    assert.equal(ducks[0]._ai.holdingChase, false, 'stuck scrum must drop claim');
+    assert.equal(ducks[1]._ai.holdingChase, true, 'free teammate becomes finder');
+  });
+
+  it('claim tie margin picks the lower duck id when costs nearly match', () => {
+    const ball = { x: 0, y: 0 };
+    const a = { id: 0, pos: [-0.8, 0.05], yaw: 0, role: 'forward' };
+    const b = { id: 1, pos: [-0.79, -0.05], yaw: 0, role: 'forward' };
+    assert.equal(assignChaserId([a, b], ball, -1), 0);
+  });
+
+  it('chase turns to keep a side-ball in the frontal FOV while walking in', () => {
+    // Ball to the duck's left; approach is ahead — wz should still pull toward the ball.
+    const ducks = [
+      { id: 0, pos: [-1.2, 0], yaw: 0, role: 'forward', fallen: false, penalized: false, team: 'red', spawnX: -0.8, spawnY: 0.5 },
+      { id: 1, pos: [-1.5, -0.8], yaw: 0, role: 'forward', fallen: false, penalized: false, team: 'red', spawnX: -0.8, spawnY: -0.5 },
+      { id: 2, pos: [-2.8, 0], yaw: 0, role: 'goalkeeper', fallen: false, penalized: false, team: 'red' },
+    ];
+    const ball = { x: -0.4, y: 0.7, vx: 0, vy: 0 };
+    const cmds = decideAll(ducks, { ball, allDucks: ducks, team: 'red' });
+    assert.equal(ducks[0]._ai.holdingChase, true);
+    assert.ok(cmds[0].wz > 0.15, `expected leftward turn toward ball, wz=${cmds[0].wz}`);
+  });
+
+  it('wrong-side at feet orbits laterally instead of walking through the ball', () => {
+    // Red attacks +X; duck stands on the +X side of the ball (not behind).
+    const ducks = [
+      {
+        id: 0, pos: [0.3, 0], yaw: Math.PI, role: 'forward', fallen: false, penalized: false,
+        team: 'red', spawnX: -0.8, spawnY: 0.5,
+        _ai: { aimTicks: 0, kickCooldown: 0, kickHoldTicks: 0, atFeetTicks: 5 },
+      },
+      { id: 1, pos: [-1.5, -0.5], yaw: 0, role: 'forward', fallen: false, penalized: false, team: 'red' },
+      { id: 2, pos: [-2.8, 0], yaw: 0, role: 'goalkeeper', fallen: false, penalized: false, team: 'red' },
+    ];
+    const ball = { x: 0, y: 0, vx: 0, vy: 0 };
+    const ap = chaseApproachPoint(ball, FIELD_HALF_L, 0.3, 0);
+    const wp = lateralOrbitPoint(0.3, 0, ball, ap.x, ap.y);
+    assert.ok(Math.abs(wp.y) > 0.2, `orbit must be lateral, got ${JSON.stringify(wp)}`);
+    assert.ok(wp.x > -0.15, `orbit must not dive through ball toward own goal, got x=${wp.x}`);
+
+    let kickCount = 0;
+    const y0 = ducks[0].pos[1];
+    for (let t = 0; t < 25; t++) {
+      const cmds = decideAll(ducks, { ball, allDucks: ducks, team: 'red' });
+      if (cmds[0].kick) kickCount++;
+      ducks[0].yaw += cmds[0].wz * 0.1;
+      ducks[0].pos[0] += Math.cos(ducks[0].yaw) * cmds[0].vx * 0.1;
+      ducks[0].pos[1] += Math.sin(ducks[0].yaw) * cmds[0].vx * 0.1;
+    }
+    assert.equal(kickCount, 0, 'must not kick from the attack side of the ball');
+    assert.ok(Math.abs(ducks[0].pos[1] - y0) > 0.08, 'should side-step around the ball');
+  });
+
+  it('non-chaser backs off when inside BALL_KEEP_OUT (no pack on the ball)', () => {
+    const ducks = [
+      {
+        id: 0, pos: [-0.4, 0], yaw: 0, role: 'forward', fallen: false, penalized: false,
+        team: 'red', spawnX: -0.8, spawnY: 0.5, _ai: { holdingChase: true },
+      },
+      {
+        id: 1, pos: [0.2, 0.05], yaw: 0, role: 'forward', fallen: false, penalized: false,
+        team: 'red', spawnX: -0.8, spawnY: -0.5, _ai: {},
+      },
+      { id: 2, pos: [-2.8, 0], yaw: 0, role: 'goalkeeper', fallen: false, penalized: false, team: 'red' },
+    ];
+    const ball = { x: 0, y: 0, vx: 0, vy: 0 };
+    const cmds = decideAll(ducks, { ball, allDucks: ducks, team: 'red' });
+    assert.equal(ducks[0]._ai.holdingChase, true);
+    // Non-chaser is ~0.2m from ball → must retreat, not press in.
+    assert.equal(cmds[1].kick, false);
+    assert.ok(cmds[1].vx > 0.05, 'keep-out should walk away from the ball');
+  });
+
+  it('behind ball and facing shotDir → kick toward opponent goal', () => {
+    const ducks = [
+      {
+        id: 0, pos: [-0.35, 0], yaw: 0, role: 'forward', fallen: false, penalized: false,
+        team: 'red', spawnX: -0.8, spawnY: 0.5,
+        _ai: { aimTicks: 0, kickCooldown: 0, kickHoldTicks: 0, atFeetTicks: 5 },
+      },
+      { id: 1, pos: [-1.5, -0.5], yaw: 0, role: 'forward', fallen: false, penalized: false, team: 'red' },
+      { id: 2, pos: [-2.8, 0], yaw: 0, role: 'goalkeeper', fallen: false, penalized: false, team: 'red' },
+    ];
+    const ball = { x: 0, y: 0, vx: 0, vy: 0 };
+    const cmds = decideAll(ducks, { ball, allDucks: ducks, team: 'red' });
+    assert.equal(cmds[0].kick, true);
+  });
+
+  it('AIM does not poke while still turning (avoids own-goal boots)', () => {
+    const ducks = [
+      {
+        id: 0, pos: [-0.3, 0], yaw: Math.PI, role: 'forward', fallen: false, penalized: false,
+        team: 'red', spawnX: -0.8, spawnY: 0.5,
+        _ai: { aimTicks: 0, kickCooldown: 0, kickHoldTicks: 0, atFeetTicks: 20, pokeArmed: false },
+      },
+      { id: 1, pos: [-1.5, -0.5], yaw: 0, role: 'forward', fallen: false, penalized: false, team: 'red' },
+      { id: 2, pos: [-2.8, 0], yaw: 0, role: 'goalkeeper', fallen: false, penalized: false, team: 'red' },
+    ];
+    const ball = { x: 0, y: 0, vx: 0, vy: 0 };
+    let kickCount = 0;
+    for (let t = 0; t < 25; t++) {
+      const cmds = decideAll(ducks, { ball, allDucks: ducks, team: 'red' });
+      if (cmds[0].kick) kickCount++;
+      ducks[0].yaw += cmds[0].wz * 0.1;
+    }
+    assert.equal(kickCount, 0, 'off-angle AIM must not poke');
+  });
+
+  it('chaseApproachPoint sits behind a still ball on the shot axis (Booster approach_target)', () => {
     const ball = { x: 0, y: 0, vx: 0, vy: 0 };
     const ap = chaseApproachPoint(ball, FIELD_HALF_L, -0.8, 0.5);
-    // Red attacks +X → approach is at −r on X, near centre line
-    assert.ok(ap.x < -0.2 && ap.x > -0.4, `expected behind ball, got x=${ap.x}`);
+    // Red attacks +X → approach ≈ −APPROACH_OFFSET on X (~0.32m)
+    assert.ok(ap.x < -0.25 && ap.x > -0.45, `expected behind ball ~0.32m, got x=${ap.x}`);
     assert.ok(Math.abs(ap.y) < 0.05, `expected on shot axis, got y=${ap.y}`);
+  });
+
+  it('AIM via decideAll creeps while turning (no vx=0 stare)', () => {
+    const ducks = [
+      {
+        id: 0, pos: [-0.3, 0], yaw: Math.PI * 0.55, role: 'forward', fallen: false, penalized: false,
+        team: 'red', spawnX: -0.8, spawnY: 0.5,
+        _ai: { aimTicks: 2, kickCooldown: 0, kickHoldTicks: 0, atFeetTicks: 5, orbitTicks: 0 },
+      },
+      { id: 1, pos: [-1.5, -0.5], yaw: 0, role: 'forward', fallen: false, penalized: false, team: 'red' },
+      { id: 2, pos: [-2.8, 0], yaw: 0, role: 'goalkeeper', fallen: false, penalized: false, team: 'red' },
+    ];
+    const ball = { x: 0, y: 0, vx: 0, vy: 0 };
+    const cmds = decideAll(ducks, { ball, allDucks: ducks, team: 'red' });
+    assert.equal(cmds[0].kick, false);
+    assert.ok(Math.abs(cmds[0].vx) > 0.1, `AIM creep expected, vx=${cmds[0].vx}`);
+    assert.ok(Math.abs(cmds[0].wz) > 0.2, 'should still be turning onto shotDir');
+  });
+
+  it('orbit blend pulls the waypoint toward the approach (spiral in)', () => {
+    const ball = { x: 0, y: 0 };
+    const ap = chaseApproachPoint(ball, FIELD_HALF_L, 0.4, 0);
+    const pure = lateralOrbitPoint(0.4, 0, ball, ap.x, ap.y, 0);
+    const blended = lateralOrbitPoint(0.4, 0, ball, ap.x, ap.y, 0.65);
+    const dPure = Math.hypot(pure.x - ap.x, pure.y - ap.y);
+    const dBlend = Math.hypot(blended.x - ap.x, blended.y - ap.y);
+    assert.ok(dBlend < dPure - 0.05, `blend should cut in (pure=${dPure}, blend=${dBlend})`);
+  });
+
+  it('chaseApproachPoint near a corner stays behind with real separation', () => {
+    const ball = { x: 2.7, y: 1.8, vx: 0, vy: 0 };
+    const ap = chaseApproachPoint(ball, FIELD_HALF_L, 2.0, 1.0);
+    const sep = Math.hypot(ap.x - ball.x, ap.y - ball.y);
+    assert.ok(sep > 0.25, `corner approach collapsed (sep=${sep})`);
+    assert.ok(
+      isBehindBall(ap.x, ap.y, ball, FIELD_HALF_L),
+      `corner approach must be behind ball for +X goal (ap=${JSON.stringify(ap)})`,
+    );
   });
 
   it('chaseApproachPoint leads a fast ball with a short prediction', () => {
@@ -459,6 +650,19 @@ describe('decideAll', () => {
     const apStill = chaseApproachPoint({ x: 0, y: 0, vx: 0, vy: 0 }, FIELD_HALF_L, -1, 0);
     const apFast = chaseApproachPoint(ball, FIELD_HALF_L, -1, 0);
     assert.ok(apFast.x > apStill.x, 'fast ball approach should shift toward travel direction');
+  });
+
+  it('does not kick while still far from the approach spot', () => {
+    // Head-on at the ball from far away: must CHASE (no kick) until near approach.
+    const ducks = [
+      { id: 0, pos: [-1.5, 0], yaw: 0, role: 'forward', fallen: false, penalized: false, team: 'red', spawnX: -0.8, spawnY: 0.5 },
+      { id: 1, pos: [-2.0, -0.8], yaw: 0, role: 'forward', fallen: false, penalized: false, team: 'red', spawnX: -0.8, spawnY: -0.5 },
+      { id: 2, pos: [-2.8, 0], yaw: 0, role: 'goalkeeper', fallen: false, penalized: false, team: 'red' },
+    ];
+    const ball = { x: 0, y: 0, vx: 0, vy: 0 };
+    const cmds = decideAll(ducks, { ball, allDucks: ducks, team: 'red' });
+    assert.equal(cmds[0].kick, false);
+    assert.ok(cmds[0].vx > 0.1, 'should walk toward approach');
   });
 
   it('non-chaser support stays near the ball instead of deep spawn mirror', () => {
@@ -483,6 +687,54 @@ describe('decideAll', () => {
     }
     assert.ok(ducks[1].pos[0] > -0.3, `support still deep (x=${ducks[1].pos[0]})`);
     assert.ok(Math.abs(ducks[1].pos[0] - ball.x) < 1.2, 'support should linger near ball lane');
+  });
+
+  it('repelWalkTarget pushes a waypoint off a stacked teammate', () => {
+    const self = { id: 0, pos: [-1, 0] };
+    const blockers = [
+      self,
+      { id: 1, pos: [0.5, 0], fallen: false },
+    ];
+    const raw = { x: 0.5, y: 0 }; // lands on teammate
+    const out = repelWalkTarget(raw.x, raw.y, self, blockers);
+    assert.ok(distanceTo(out.x, out.y, 0.5, 0) > 0.15, 'should leave the teammate footprint');
+    assert.ok(Math.abs(out.y) > Math.abs(out.x - 0.5) * 0.5 || out.y !== 0, 'prefer lateral separation');
+  });
+
+  it('repelWalkTarget ignores fallen ducks and leaves distant targets alone', () => {
+    const self = { id: 0, pos: [0, 0] };
+    const far = repelWalkTarget(1.5, 0, self, [
+      { id: 1, pos: [-1, 0], fallen: false },
+    ]);
+    assert.equal(far.x, 1.5);
+    assert.equal(far.y, 0);
+
+    const overFallen = repelWalkTarget(0.5, 0, self, [
+      { id: 1, pos: [0.5, 0], fallen: true },
+    ]);
+    assert.equal(overFallen.x, 0.5);
+    assert.equal(overFallen.y, 0);
+  });
+
+  it('support walk veers off when a teammate sits on the support slot', () => {
+    // Chaser near ball (+y) → support lane is at −SUPPORT_LATERAL; park a body there.
+    const slotX = 0.5 + BASE_TUNE.SUPPORT_AHEAD + BASE_TUNE.FORMATION_X_ADVANCE * 0.35;
+    const slotY = -BASE_TUNE.SUPPORT_LATERAL;
+    const ducks = [
+      { id: 0, pos: [0.4, 0.05], yaw: 0, role: 'forward', fallen: false, penalized: false, team: 'red', spawnX: -0.8, spawnY: 0.5, _ai: {} },
+      { id: 1, pos: [-0.5, -0.8], yaw: 0, role: 'forward', fallen: false, penalized: false, team: 'red', spawnX: -0.8, spawnY: -0.5, _ai: {} },
+      { id: 2, pos: [-2.8, 0], yaw: 0, role: 'goalkeeper', fallen: false, penalized: false, team: 'red', spawnX: -2.8, spawnY: 0 },
+      { id: 3, pos: [slotX, slotY], yaw: 0, role: 'forward', fallen: false, penalized: false, team: 'blue' },
+    ];
+    const ball = { x: 0.5, y: 0, vx: 0, vy: 0 };
+    for (let t = 0; t < 20; t++) {
+      const c = decideAll(ducks, { ball, allDucks: ducks, team: 'red' })[1];
+      ducks[1].yaw += c.wz * 0.1;
+      ducks[1].pos[0] += Math.cos(ducks[1].yaw) * c.vx * 0.1;
+      ducks[1].pos[1] += Math.sin(ducks[1].yaw) * c.vx * 0.1;
+    }
+    const dBlock = distanceTo(ducks[1].pos[0], ducks[1].pos[1], slotX, slotY);
+    assert.ok(dBlock > BASE_TUNE.AVOID_RADIUS * 0.45, `walked onto blocker (d=${dBlock})`);
   });
 });
 

@@ -149,6 +149,61 @@ export function uiClick() {
   playSfx("click", { gain: 0.16, rate: 0.95 + Math.random() * 0.1 });
 }
 
+// ── Danmaku commentary cues (synthesized, keyed by line.kind) ─────────
+// Short retro blips that fire when a commentary line spawns. Keeps the
+// mix alive without physics collision spam. Master mute still silences.
+const DANMAKU_CUES = {
+  goal:            { freqs: [523, 784, 1046], gap: 0.07, dur: 0.14, gain: 0.14, type: "square" },
+  fulltime:        { freqs: [392, 523, 659], gap: 0.08, dur: 0.16, gain: 0.12, type: "triangle" },
+  kickoff:         { freqs: [440, 554, 659], gap: 0.06, dur: 0.11, gain: 0.11, type: "square" },
+  extra_time:      { freqs: [587, 740], gap: 0.07, dur: 0.12, gain: 0.11, type: "square" },
+  shot:            { freqs: [880, 1320], gap: 0.04, dur: 0.07, gain: 0.1, type: "triangle" },
+  danger:          { freqs: [740, 990], gap: 0.045, dur: 0.08, gain: 0.1, type: "square" },
+  yellow_card:     { freqs: [330, 280], gap: 0.09, dur: 0.12, gain: 0.1, type: "square" },
+  red_card:        { freqs: [220, 165], gap: 0.1, dur: 0.16, gain: 0.12, type: "sawtooth" },
+  penalty:         { freqs: [247, 196], gap: 0.09, dur: 0.14, gain: 0.11, type: "square" },
+  penalty_reset:   { freqs: [220], gap: 0, dur: 0.1, gain: 0.08, type: "triangle" },
+  goal_disallowed: { freqs: [400, 300], gap: 0.08, dur: 0.11, gain: 0.09, type: "triangle" },
+  corner_red:      { freqs: [698], gap: 0, dur: 0.09, gain: 0.08, type: "triangle" },
+  corner_blue:     { freqs: [622], gap: 0, dur: 0.09, gain: 0.08, type: "triangle" },
+  throw_in:        { freqs: [520], gap: 0, dur: 0.07, gain: 0.07, type: "triangle" },
+  goal_kick:       { freqs: [466], gap: 0, dur: 0.08, gain: 0.07, type: "triangle" },
+  idle_stalemate:  { freqs: [490], gap: 0, dur: 0.05, gain: 0.05, type: "sine" },
+  idle_tied:       { freqs: [520], gap: 0, dur: 0.05, gain: 0.05, type: "sine" },
+  idle_leading:    { freqs: [560], gap: 0, dur: 0.055, gain: 0.055, type: "sine" },
+  idle_trailing:   { freqs: [430], gap: 0, dur: 0.055, gain: 0.055, type: "sine" },
+};
+
+const DANMAKU_FALLBACK = { freqs: [600], gap: 0, dur: 0.06, gain: 0.06, type: "triangle" };
+
+export function playDanmakuCue(kind) {
+  if (SOUND_DISABLED || muted) return;
+  const c = audioCtx();
+  if (c.state === "suspended") return;
+  const cue = DANMAKU_CUES[kind] || DANMAKU_FALLBACK;
+  const t0 = c.currentTime + 0.01;
+  const out = c.createGain();
+  out.gain.value = 1;
+  out.connect(buses.sfx);
+  cue.freqs.forEach((f, i) => {
+    const start = t0 + i * cue.gap;
+    const osc = c.createOscillator();
+    osc.type = cue.type;
+    osc.frequency.value = f * (0.98 + Math.random() * 0.04);
+    const g = c.createGain();
+    g.gain.setValueAtTime(0, start);
+    g.gain.linearRampToValueAtTime(cue.gain, start + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.001, start + cue.dur);
+    osc.connect(g);
+    g.connect(out);
+    osc.start(start);
+    osc.stop(start + cue.dur + 0.02);
+    if (i === cue.freqs.length - 1) {
+      osc.onended = () => out.disconnect();
+    }
+  });
+}
+
 // ── Spatial listener + emitters ───────────────────────────────────────
 // Listener follows the three.js camera (three world coords). Emitters are
 // equalpower panners: cheap, and plenty for "the duck is over there".
