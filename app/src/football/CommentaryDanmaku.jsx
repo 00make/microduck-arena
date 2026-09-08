@@ -165,10 +165,10 @@ export default function CommentaryDanmaku() {
       aria-hidden
       sx={{
         position: "fixed",
-        top: { xs: "5.5rem", md: "6.25rem" },
+        top: { xs: "32%", md: "6.25rem" },
         left: 0,
         right: 0,
-        height: { xs: "38%", md: "42%" },
+        height: { xs: "28%", md: "42%" },
         zIndex: 11,
         pointerEvents: "none",
         overflow: "hidden",
@@ -183,7 +183,7 @@ export default function CommentaryDanmaku() {
             left: "100%",
             whiteSpace: "nowrap",
             fontFamily: ANTON,
-            fontSize: { xs: "0.95rem", md: "1.15rem" },
+            fontSize: { xs: "0.82rem", md: "1.15rem" },
             letterSpacing: "0.04em",
             color: it.team === "red" ? RED_ACCENT : it.team === "blue" ? BLUE_ACCENT : CREAM,
             textShadow: `0 1px 0 ${COMIC_INK}, 0 0 10px rgba(0,0,0,0.65)`,

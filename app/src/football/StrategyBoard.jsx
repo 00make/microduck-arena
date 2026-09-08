@@ -86,7 +86,7 @@ function TeamTags({ team, strategy, locale, isUser, onOpenCoach }) {
         border: `2px solid ${accent}`,
         boxShadow: `inset 0 0 0 1px ${COMIC_INK}`,
         background: GLASS,
-        p: "0.45rem 0.55rem",
+        p: { xs: "0.35rem 0.4rem", sm: "0.45rem 0.55rem" },
         pointerEvents: isUser ? "auto" : "none",
         cursor: isUser ? "pointer" : "default",
       }}
@@ -104,7 +104,7 @@ function TeamTags({ team, strategy, locale, isUser, onOpenCoach }) {
       <Box
         sx={{
           fontFamily: ANTON,
-          fontSize: "0.72rem",
+          fontSize: { xs: "0.62rem", sm: "0.72rem" },
           letterSpacing: "0.1em",
           textTransform: "uppercase",
           color: accent,
@@ -117,7 +117,7 @@ function TeamTags({ team, strategy, locale, isUser, onOpenCoach }) {
       <Box
         sx={{
           fontFamily: MONO,
-          fontSize: "0.52rem",
+          fontSize: { xs: "0.46rem", sm: "0.52rem" },
           fontWeight: 600,
           letterSpacing: "0.04em",
           color: CREAM,
@@ -161,13 +161,13 @@ export default function StrategyBoard() {
       sx={{
         position: "fixed",
         left: "50%",
-        bottom: "0.85rem",
+        bottom: { xs: "calc(0.45rem + env(safe-area-inset-bottom, 0px))", sm: "0.85rem" },
         transform: "translateX(-50%)",
         zIndex: 10,
-        width: "min(44rem, calc(100vw - 1.5rem))",
+        width: { xs: "calc(100vw - 0.9rem)", sm: "min(44rem, calc(100vw - 1.5rem))" },
         display: "flex",
         flexDirection: "column",
-        gap: "0.4rem",
+        gap: { xs: "0.25rem", sm: "0.4rem" },
         pointerEvents: "none",
         "& > *": { pointerEvents: "auto" },
       }}
@@ -177,24 +177,28 @@ export default function StrategyBoard() {
           border: `2px solid ${COMIC_INK}`,
           background: GLASS,
           boxShadow: `inset 0 0 0 1px rgba(255,255,255,0.08)`,
-          p: "0.5rem 0.7rem 0.55rem",
+          p: { xs: "0.3rem 0.45rem 0.35rem", sm: "0.5rem 0.7rem 0.55rem" },
           display: "flex",
-          flexDirection: "column",
-          gap: "0.4rem",
+          flexDirection: { xs: "row", sm: "column" },
+          alignItems: { xs: "center", sm: "stretch" },
+          gap: { xs: "0.55rem", sm: "0.4rem" },
         }}
       >
-        <PossBar redPct={redPct} locale={locale} />
+        <Box sx={{ flex: { xs: "1 1 0", sm: "none" }, minWidth: 0, width: { sm: "100%" } }}>
+          <PossBar redPct={redPct} locale={locale} />
+        </Box>
         <Box
           sx={{
             display: "flex",
             justifyContent: "center",
             alignItems: "baseline",
-            gap: "0.55rem",
+            gap: "0.35rem",
             fontFamily: ANTON,
-            fontSize: "0.95rem",
+            fontSize: { xs: "0.82rem", sm: "0.95rem" },
             letterSpacing: "0.08em",
             color: CREAM,
             lineHeight: 1,
+            flex: "none",
           }}
         >
           <Box component="span" sx={{ color: RED_ACCENT }}>{shotsR}</Box>
@@ -202,7 +206,7 @@ export default function StrategyBoard() {
             component="span"
             sx={{
               fontFamily: MONO,
-              fontSize: "0.5rem",
+              fontSize: { xs: "0.42rem", sm: "0.5rem" },
               letterSpacing: "0.14em",
               textTransform: "uppercase",
               color: "rgba(255,255,255,0.45)",
@@ -214,7 +218,7 @@ export default function StrategyBoard() {
         </Box>
       </Box>
 
-      <Box sx={{ display: "flex", gap: "0.45rem" }}>
+      <Box sx={{ display: "flex", gap: "0.35rem" }}>
         <TeamTags
           team="red"
           strategy={board?.strategy?.red}
