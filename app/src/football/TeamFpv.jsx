@@ -17,9 +17,9 @@ function FpvSlot({ team, locale, canvasRef }) {
   return (
     <Box
       sx={{
-        width: "min(14rem, 32vw)",
+        width: { xs: "min(5.1rem, 24vw)", sm: "min(14rem, 32vw)" },
         pointerEvents: "none",
-        border: `2px solid ${accent}`,
+        border: { xs: `1.5px solid ${accent}`, sm: `2px solid ${accent}` },
         boxShadow: `inset 0 0 0 1px ${COMIC_INK}, 0 8px 24px rgba(0,0,0,0.45)`,
         background: "#0a0a10",
         overflow: "hidden",
@@ -30,16 +30,16 @@ function FpvSlot({ team, locale, canvasRef }) {
           display: "flex",
           justifyContent: "space-between",
           alignItems: "baseline",
-          px: "0.4rem",
-          pt: "0.25rem",
-          pb: "0.15rem",
+          px: { xs: "0.25rem", sm: "0.4rem" },
+          pt: { xs: "0.15rem", sm: "0.25rem" },
+          pb: { xs: "0.1rem", sm: "0.15rem" },
           background: "rgba(8,8,12,0.95)",
         }}
       >
         <Box
           sx={{
             fontFamily: ANTON,
-            fontSize: "0.58rem",
+            fontSize: { xs: "0.48rem", sm: "0.58rem" },
             letterSpacing: "0.1em",
             textTransform: "uppercase",
             color: accent,
@@ -56,6 +56,7 @@ function FpvSlot({ team, locale, canvasRef }) {
             textTransform: "uppercase",
             color: "rgba(255,255,255,0.45)",
             lineHeight: 1,
+            display: { xs: "none", sm: "block" },
           }}
         >
           {t(locale, "fpvLabel")}
@@ -120,21 +121,21 @@ export default function TeamFpv() {
     <Box
       sx={{
         position: "fixed",
-        // Clear Back / Scoreboard / GitHub row
-        top: "6.85rem",
+        // Clear compact (xs) / full (sm+) top chrome row
+        top: { xs: "7.15rem", sm: "6.85rem" },
         left: 0,
         right: 0,
         zIndex: 11,
         display: "flex",
         justifyContent: "space-between",
         alignItems: "flex-start",
-        px: "max(0.75rem, calc(50% - 24rem))",
-        gap: "0.75rem",
+        px: { xs: "0.45rem", sm: "max(0.75rem, calc(50% - 24rem))" },
+        gap: { xs: "0.35rem", sm: "0.75rem" },
         pointerEvents: "none",
       }}
     >
       <FpvSlot team="red" locale={locale} canvasRef={redRef} />
-      <Box sx={{ flex: "1 1 10rem", maxWidth: "12rem" }} />
+      <Box sx={{ flex: { xs: "1 1 2rem", sm: "1 1 10rem" }, maxWidth: { xs: "4rem", sm: "12rem" } }} />
       <FpvSlot team="blue" locale={locale} canvasRef={blueRef} />
     </Box>
   );

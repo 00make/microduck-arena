@@ -103,12 +103,14 @@ function BackButton() {
     <Box
       sx={{
         position: "fixed",
-        top: "1.25rem",
-        left: "1.5rem",
-        zIndex: 10,
+        top: { xs: "0.55rem", sm: "1.25rem" },
+        left: { xs: "0.5rem", sm: "1.5rem" },
+        zIndex: 12,
         pointerEvents: "auto",
         display: "flex",
-        gap: "0.45rem",
+        flexWrap: "nowrap",
+        maxWidth: { xs: "calc(100vw - 3.5rem)", sm: "none" },
+        gap: { xs: "0.28rem", sm: "0.45rem" },
       }}
     >
       <Box
@@ -116,12 +118,13 @@ function BackButton() {
           ...scorePlateSx,
           flexDirection: "row",
           minWidth: "unset",
-          padding: "6px 14px",
+          padding: { xs: "5px 8px", sm: "6px 14px" },
         }}
       >
         <Box
           component="button"
           type="button"
+          aria-label={t(locale, "back")}
           onClick={() => { uiClick(); useGame.setState({ menuOpen: true }); }}
           sx={{
             appearance: "none",
@@ -134,7 +137,7 @@ function BackButton() {
             color: CREAM,
             cursor: "pointer",
             fontFamily: ANTON,
-            fontSize: "0.82rem",
+            fontSize: { xs: "0.72rem", sm: "0.82rem" },
             letterSpacing: "0.08em",
             textTransform: "uppercase",
             lineHeight: 1,
@@ -150,7 +153,10 @@ function BackButton() {
             },
           }}
         >
-          <BackArrowIcon /> {t(locale, "back")}
+          <BackArrowIcon />
+          <Box component="span" sx={{ display: { xs: "none", sm: "inline" } }}>
+            {t(locale, "back")}
+          </Box>
         </Box>
       </Box>
       <DanmakuToggleButton />
@@ -168,7 +174,7 @@ function DanmakuToggleButton() {
         ...scorePlateSx,
         flexDirection: "row",
         minWidth: "unset",
-        padding: "6px 12px",
+        padding: { xs: "5px 8px", sm: "6px 12px" },
       }}
     >
       <Box
@@ -189,7 +195,7 @@ function DanmakuToggleButton() {
           color: enabled ? CREAM : "rgba(250,248,242,0.45)",
           cursor: "pointer",
           fontFamily: MONO,
-          fontSize: "0.65rem",
+          fontSize: { xs: "0.55rem", sm: "0.65rem" },
           letterSpacing: "0.1em",
           textTransform: "uppercase",
           lineHeight: 1,
@@ -212,7 +218,7 @@ function SpeedToggleButton() {
         ...scorePlateSx,
         flexDirection: "row",
         minWidth: "unset",
-        padding: "6px 12px",
+        padding: { xs: "5px 8px", sm: "6px 12px" },
       }}
     >
       <Box
@@ -237,7 +243,7 @@ function SpeedToggleButton() {
           color: n > 1 ? ORANGE : CREAM,
           cursor: "pointer",
           fontFamily: MONO,
-          fontSize: "0.65rem",
+          fontSize: { xs: "0.55rem", sm: "0.65rem" },
           letterSpacing: "0.08em",
           textTransform: "uppercase",
           lineHeight: 1,
@@ -267,48 +273,61 @@ function Scoreboard() {
     <Box
       sx={{
         position: "fixed",
-        top: "1.25rem",
+        // Phones: sit under the chrome row so Back / 弹幕 / GitHub never collide.
+        top: { xs: "2.85rem", sm: "1.25rem" },
         left: "50%",
         transform: "translateX(-50%)",
-        zIndex: 10,
+        zIndex: 11,
         pointerEvents: "none",
+        maxWidth: { xs: "min(14rem, calc(100vw - 1.2rem))", sm: "none" },
       }}
     >
-      <Box sx={scorePlateSx}>
+      <Box
+        sx={{
+          ...scorePlateSx,
+          minWidth: { xs: 0, sm: 240 },
+          width: { xs: "100%", sm: "auto" },
+          padding: { xs: "5px 14px 4px", sm: "10px 24px 8px" },
+        }}
+      >
         {/* Score line */}
         <Box
           sx={{
             fontFamily: ANTON,
-            fontSize: "1.6rem",
+            fontSize: { xs: "1.05rem", sm: "1.6rem" },
             lineHeight: 1,
             letterSpacing: "0.04em",
             color: CREAM,
             display: "flex",
             alignItems: "center",
-            gap: "0.5em",
+            justifyContent: "center",
+            gap: { xs: "0.28em", sm: "0.5em" },
             animation: isGoal
               ? `${goalFlash} 0.6s ease infinite`
               : "none",
             "@media (prefers-reduced-motion: reduce)": { animation: "none" },
           }}
         >
-          <Box component="span" sx={{ color: RED_ACCENT }}>RED</Box>
+          <Box component="span" sx={{ color: RED_ACCENT, display: { xs: "none", sm: "inline" } }}>RED</Box>
+          <Box component="span" sx={{ color: RED_ACCENT, display: { xs: "inline", sm: "none" }, fontSize: "0.72em" }}>R</Box>
           <Box component="span" sx={{ color: CREAM }}>{red}</Box>
           <Box component="span" sx={{ color: "rgba(250,248,242,0.4)", mx: "0.1em" }}>—</Box>
           <Box component="span" sx={{ color: CREAM }}>{blue}</Box>
-          <Box component="span" sx={{ color: BLUE_ACCENT }}>BLUE</Box>
+          <Box component="span" sx={{ color: BLUE_ACCENT, display: { xs: "none", sm: "inline" } }}>BLUE</Box>
+          <Box component="span" sx={{ color: BLUE_ACCENT, display: { xs: "inline", sm: "none" }, fontSize: "0.72em" }}>B</Box>
         </Box>
 
         {/* Timer */}
         <Box
           sx={{
             fontFamily: MONO,
-            fontSize: "1.1rem",
+            fontSize: { xs: "0.85rem", sm: "1.1rem" },
             letterSpacing: "0.12em",
             color: CREAM,
-            mt: "4px",
+            mt: { xs: "2px", sm: "4px" },
             fontVariantNumeric: "tabular-nums",
             opacity: 0.9,
+            textAlign: "center",
           }}
         >
           {time}
@@ -318,13 +337,14 @@ function Scoreboard() {
         <Box
           sx={{
             fontFamily: ANTON,
-            fontSize: "0.6rem",
+            fontSize: { xs: "0.5rem", sm: "0.6rem" },
             letterSpacing: "0.14em",
             textTransform: "uppercase",
-            mt: "4px",
+            mt: { xs: "2px", sm: "4px" },
             color: isGoal ? COMIC_ORANGE : "rgba(250, 248, 242, 0.55)",
             animation: isGoal ? `${pulseGlow} 1s ease infinite` : "none",
             "@media (prefers-reduced-motion: reduce)": { animation: "none" },
+            textAlign: "center",
           }}
         >
           {label}
@@ -383,16 +403,18 @@ export function MatchResultBanner() {
         aria-live="polite"
         sx={{
           position: "fixed",
-          top: "8.75rem",
+          top: { xs: "5.5rem", sm: "8.75rem" },
           left: "50%",
           translate: "-50% 0",
-          zIndex: 11,
+          zIndex: 13,
           pointerEvents: "none",
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
-          gap: "0.65rem",
-          rotate: "-1.5deg",
+          gap: { xs: "0.45rem", sm: "0.65rem" },
+          width: { xs: "calc(100vw - 1.25rem)", sm: "auto" },
+          maxWidth: "28rem",
+          rotate: { xs: "-0.6deg", sm: "-1.5deg" },
           animation: `${slamIn} 0.45s cubic-bezier(0.2, 1.4, 0.4, 1) both`,
           "@media (prefers-reduced-motion: reduce)": { animation: "none" },
         }}
@@ -407,7 +429,9 @@ export function MatchResultBanner() {
             outlineOffset: 0,
             borderRadius: 0,
             background: GLASS,
-            padding: "10px 34px 12px",
+            padding: { xs: "8px 16px 10px", sm: "10px 34px 12px" },
+            width: { xs: "100%", sm: "auto" },
+            boxSizing: "border-box",
             boxShadow: `7px 7px 0 ${COMIC_INK}, 7px 7px 0 2px ${accent}55`,
             "&::after": {
               content: '""',
@@ -421,7 +445,7 @@ export function MatchResultBanner() {
           <Box
             sx={{
               fontFamily: ANTON,
-              fontSize: "clamp(1.8rem, 5.5vw, 3.1rem)",
+              fontSize: "clamp(1.35rem, 7vw, 3.1rem)",
               lineHeight: 0.95,
               letterSpacing: "0.06em",
               textTransform: "uppercase",
@@ -429,7 +453,8 @@ export function MatchResultBanner() {
               textShadow: win
                 ? `3px 3px 0 ${COMIC_INK}`
                 : `3px 3px 0 ${COMIC_INK}, 3px 3px 0 ${COMIC_ORANGE}66`,
-              whiteSpace: "nowrap",
+              whiteSpace: { xs: "normal", sm: "nowrap" },
+              textAlign: "center",
             }}
           >
             {headline}
@@ -567,7 +592,11 @@ function EventTicker() {
     <Box
       sx={{
         position: "fixed",
-        bottom: "11.5rem",
+        // Sit just above the bottom strategy board (shorter on phones).
+        bottom: {
+          xs: "calc(5.6rem + env(safe-area-inset-bottom, 0px))",
+          sm: "11.5rem",
+        },
         left: "50%",
         transform: "translateX(-50%)",
         zIndex: 10,
@@ -576,6 +605,7 @@ function EventTicker() {
         flexDirection: "column",
         alignItems: "center",
         gap: "4px",
+        maxWidth: "calc(100vw - 1rem)",
       }}
     >
       {events.map((ev, i) => (
@@ -583,15 +613,18 @@ function EventTicker() {
           key={`${ev.type}-${ev.time}-${i}`}
           sx={{
             fontFamily: MONO,
-            fontSize: "0.7rem",
+            fontSize: { xs: "0.58rem", sm: "0.7rem" },
             letterSpacing: "0.1em",
             textTransform: "uppercase",
             color: CREAM,
             background: "rgba(16, 16, 24, 0.75)",
             border: `1px solid rgba(255, 122, 47, 0.35)`,
             borderRadius: 0,
-            padding: "4px 12px",
+            padding: { xs: "3px 8px", sm: "4px 12px" },
             whiteSpace: "nowrap",
+            maxWidth: "100%",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
             opacity: 1 - i * 0.25,
             animation: `${fadeSlideUp} 0.3s ease both`,
             animationDelay: `${i * 0.08}s`,
@@ -619,8 +652,9 @@ function PenaltyIndicator() {
     <Box
       sx={{
         position: "fixed",
-        top: "17.5rem",
-        right: "1.25rem",
+        top: { xs: "auto", sm: "17.5rem" },
+        bottom: { xs: "calc(7.6rem + env(safe-area-inset-bottom, 0px))", sm: "auto" },
+        right: { xs: "0.55rem", sm: "1.25rem" },
         left: "auto",
         transform: "none",
         zIndex: 12,
@@ -654,6 +688,12 @@ function PenaltyIndicator() {
 
 // ── Main export ───────────────────────────────────────────────────────────
 export default function FootballHud() {
+  const entered = useGame((s) => s.entered);
+  const menuOpen = useGame((s) => s.menuOpen);
+  // Title / pause overlay is opaque — keep match chrome out of the way so
+  // it cannot peek through or steal layout on phones.
+  if (!entered || menuOpen) return null;
+
   return (
     <Box
       sx={{
@@ -669,11 +709,13 @@ export default function FootballHud() {
       <GitHubLink
         sx={{
           position: "fixed",
-          // Keep clear of blue FPV (starts ~6.85rem)
-          top: { xs: "1.15rem", md: "1.2rem" },
-          right: "1.5rem",
+          top: { xs: "0.55rem", sm: "1.2rem" },
+          right: { xs: "0.5rem", sm: "1.5rem" },
           zIndex: 12,
           pointerEvents: "auto",
+          width: { xs: "36px", sm: "48px" },
+          height: { xs: "36px", sm: "48px" },
+          "& svg": { width: { xs: "20px", sm: "28px" }, height: { xs: "20px", sm: "28px" } },
         }}
       />
       <MatchResultBanner />

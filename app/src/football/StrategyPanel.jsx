@@ -144,12 +144,13 @@ function ChipGroup({ label, options, labels, value, onChange, disabled }) {
                 background: on ? "rgba(255,122,47,0.18)" : "rgba(0,0,0,0.25)",
                 color: on ? CREAM : "rgba(255,255,255,0.72)",
                 fontFamily: ANTON,
-                fontSize: "0.72rem",
+                fontSize: { xs: "0.68rem", sm: "0.72rem" },
                 letterSpacing: "0.06em",
                 textTransform: "uppercase",
                 lineHeight: 1,
-                px: "0.65rem",
-                py: "0.45rem",
+                px: { xs: "0.55rem", sm: "0.65rem" },
+                py: { xs: "0.5rem", sm: "0.45rem" },
+                minHeight: { xs: "2rem", sm: "unset" },
                 opacity: disabled ? 0.45 : 1,
                 "&:hover": disabled ? undefined : { borderColor: ORANGE },
               }}
@@ -330,19 +331,24 @@ export default function StrategyPanel({ compact = false, formationLocked = false
       aria-label={t(locale, "teamTactics")}
       sx={{
         width: "100%",
-        maxWidth: compact ? "24rem" : "32rem",
+        maxWidth: compact ? "24rem" : { xs: "100%", sm: "32rem" },
         mx: "auto",
-        mt: compact ? 0 : "1.35rem",
-        p: compact ? "0.75rem 0.85rem" : "0.95rem 1.05rem",
+        mt: compact ? 0 : { xs: "0.75rem", sm: "1.35rem" },
+        p: compact
+          ? "0.75rem 0.85rem"
+          : { xs: "0.7rem 0.75rem", sm: "0.95rem 1.05rem" },
         border: `2px solid rgba(255,255,255,0.14)`,
         boxShadow: `inset 0 0 0 1px ${COMIC_INK}`,
         background: "rgba(16,16,24,0.72)",
         display: "flex",
         flexDirection: "column",
-        gap: compact ? "0.55rem" : "0.75rem",
+        gap: compact ? "0.55rem" : { xs: "0.55rem", sm: "0.75rem" },
         textAlign: "left",
-        maxHeight: compact ? "70vh" : undefined,
-        overflowY: compact ? "auto" : undefined,
+        maxHeight: compact
+          ? "70vh"
+          : { xs: "min(48vh, 26rem)", sm: "none" },
+        overflowY: compact ? "auto" : { xs: "auto", sm: "visible" },
+        WebkitOverflowScrolling: "touch",
       }}
     >
       <Typography

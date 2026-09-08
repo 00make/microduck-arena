@@ -257,7 +257,7 @@ export default function FootballTitle({ onKickOff }) {
         flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
-        p: "2.4rem 1.4rem 1.8rem",
+        p: { xs: "1.1rem 0.85rem 1.1rem", sm: "2.4rem 1.4rem 1.8rem" },
         background: INK,
         opacity: menuOpen ? 1 : 0,
         pointerEvents: menuOpen ? "auto" : "none",
@@ -282,8 +282,8 @@ export default function FootballTitle({ onKickOff }) {
         aria-hidden
         sx={{
           position: "absolute",
-          top: "1.25rem",
-          left: "1.5rem",
+          top: { xs: "0.75rem", sm: "1.25rem" },
+          left: { xs: "0.75rem", sm: "1.5rem" },
           zIndex: 1,
           display: "flex",
           alignItems: "center",
@@ -299,7 +299,7 @@ export default function FootballTitle({ onKickOff }) {
           sx={{
             position: "relative",
             display: "block",
-            height: "2.1rem",
+            height: { xs: "1.7rem", sm: "2.1rem" },
             filter: "drop-shadow(2px 2px 0 rgba(0, 0, 0, 0.5))",
           }}
         >
@@ -341,9 +341,38 @@ export default function FootballTitle({ onKickOff }) {
         </Box>
       </Box>
       )}
-      {ready && <PreorderButton sx={{ ...row(0.1) }} />}
-      {ready && <GitHubLink sx={{ ...row(0.18) }} />}
-      {ready && <LangToggle sx={{ ...row(0.22) }} />}
+      {ready && (
+        <PreorderButton
+          sx={{
+            ...row(0.1),
+            display: { xs: "none", sm: "block" },
+          }}
+        />
+      )}
+      {ready && (
+        <GitHubLink
+          sx={{
+            ...row(0.18),
+            // On phones there is no shop plate above — park next to the duck row.
+            top: { xs: "0.65rem", md: "5.15rem" },
+            right: { xs: "0.75rem", md: "1.5rem" },
+            width: { xs: "36px", md: "48px" },
+            height: { xs: "36px", md: "48px" },
+            "& svg": { width: { xs: "20px", md: "28px" }, height: { xs: "20px", md: "28px" } },
+          }}
+        />
+      )}
+      {ready && (
+        <LangToggle
+          sx={{
+            ...row(0.22),
+            top: { xs: "3.35rem", md: "8.75rem" },
+            right: { xs: "0.75rem", md: "1.5rem" },
+            transform: { xs: "scale(0.92)", md: "none" },
+            transformOrigin: "top right",
+          }}
+        />
+      )}
 
       {/* Boot gate: one centered spinner on bare ink with the match's
           step line until fonts, brand art and the game core are in. A
@@ -400,7 +429,7 @@ export default function FootballTitle({ onKickOff }) {
           maxWidth: "min(48rem, 94vw)",
           flex: "1 1 auto",
           minHeight: 0,
-          pt: { xs: "2.6rem", md: "1rem" },
+          pt: { xs: "3.4rem", sm: "2.6rem", md: "1rem" },
         }}
       >
         {bootFailed ? (
@@ -428,7 +457,7 @@ export default function FootballTitle({ onKickOff }) {
           component="h1"
           tone="dark"
           accent={ORANGE}
-          fontSize="clamp(3.2rem, 8.5vw, 5.8rem)"
+          fontSize="clamp(2.35rem, 11vw, 5.8rem)"
           lines={[
             { text: "Microduck" },
             { text: "Football 3v3", variant: "outline", scale: 0.62 },
@@ -439,14 +468,15 @@ export default function FootballTitle({ onKickOff }) {
         <Typography
           sx={{
             mx: "auto",
-            mt: "1.1rem",
-            "@media (max-height: 700px)": { mt: "0.8rem" },
+            mt: { xs: "0.7rem", sm: "1.1rem" },
+            "@media (max-height: 700px)": { mt: "0.55rem" },
             maxWidth: "38ch",
-            fontSize: { xs: "0.95rem", sm: "1.05rem" },
-            lineHeight: 1.5,
+            fontSize: { xs: "0.85rem", sm: "1.05rem" },
+            lineHeight: 1.45,
             letterSpacing: "-0.012em",
             color: "rgba(255, 255, 255, 0.72)",
             textWrap: "balance",
+            px: { xs: "0.25rem", sm: 0 },
             ...row(0.24),
           }}
         >
@@ -463,8 +493,8 @@ export default function FootballTitle({ onKickOff }) {
             display: "inline-flex",
             flexDirection: "column",
             alignItems: "center",
-            mt: "1.4rem",
-            "@media (max-height: 700px)": { mt: "1rem" },
+            mt: { xs: "0.9rem", sm: "1.4rem" },
+            "@media (max-height: 700px)": { mt: "0.75rem" },
             ...row(0.32),
           }}
         >
@@ -544,9 +574,10 @@ export default function FootballTitle({ onKickOff }) {
           position: "relative",
           width: "100%",
           textAlign: "center",
-          mt: "1.2rem",
-          pt: "1.15rem",
+          mt: { xs: "0.85rem", sm: "1.2rem" },
+          pt: { xs: "0.85rem", sm: "1.15rem" },
           borderTop: "1px solid rgba(255, 255, 255, 0.08)",
+          display: { xs: "none", sm: "block" },
           ...row(0.5),
         }}
       >
